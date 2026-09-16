@@ -1,0 +1,31 @@
+# 角色资源
+
+本目录存放 AzurJuus 的角色人设素材，每个角色由两个文件组成：
+
+| 文件 | 内容 | 用途 |
+| --- | --- | --- |
+| `<角色名>.json` | 结构化角色资料：阵营、舰种、稀有度、立绘 URL、角色设定、台词表、主题配色 | 创建角色账号、生成头像与界面主题 |
+| `<角色名>.prompt.md` | 由 JSON 提炼的人设提示词：角色定位、说话与互动风格、扮演要求 | 注入模型系统提示，决定角色怎么说话 |
+
+当前内置 8 位角色：信浓、能代、埃佛森、豪、雅努斯、岛风、奥古斯特-冯-帕塞瓦尔、奥斯特雷德-冯-帕赫贝尔。
+
+## 重新抓取或添加角色
+
+数据由 `tools/blhx_character_import.py` 抓取并生成本目录下的文件：
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 tools\blhx_character_import.py 信浓
+.\.venv\Scripts\python.exe -X utf8 tools\blhx_character_import.py https://wiki.biligame.com/blhx/能代 --refresh
+```
+
+参数为角色名或完整 wiki 链接；`--refresh` 会忽略本地缓存重新抓取。抓取结果只写入本目录，不会改动其他资源。
+
+## 数据来源与版权声明
+
+- 角色资料的抓取来源是**碧蓝航线 BWIKI**：<https://wiki.biligame.com/blhx/>
+- 《碧蓝航线》游戏内容、角色设定、台词与美术素材，版权归**蛮啾网络（Manjuu）**与**勇仕网络（Yongshi）**所有。
+- 本目录中的 JSON / Markdown 是面向个人学习与研究的社区 wiki 数据整理结果，**不是官方素材**，也不代表官方立场。
+- 角色立绘通过 `illustrations` 字段的远程 URL 引用，仓库**不包含**任何图片文件，仅保存链接。
+- 如果你是权利方并希望移除相关内容，请提交 Issue，我们会删除对应文件。
+
+在二次分发或商用前，请自行确认是否符合原作的使用条款。
