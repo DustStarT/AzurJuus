@@ -78,9 +78,10 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             while True:
                 try:
                     mind.pump()
-                    if not app.state.runs.tasks and os.getenv('AZURJUUS_REFLECTION_ENABLED', '1') == '1':
+                    if not app.state.runs.tasks:
                         async with maintenance_lock:
-                            await mind.reflect_once(generate, lambda: bool(app.state.runs.tasks))
+                            if os.getenv('AZURJUUS_REFLECTION_ENABLED', '1') == '1':
+                                await mind.reflect_once(generate, lambda: bool(app.state.runs.tasks))
                             if os.getenv('AZURJUUS_SKILL_TRIALS_ENABLED', '1') == '1':
                                 await app.state.runs.growth.tick(lambda: bool(app.state.runs.tasks))
                 except asyncio.CancelledError:
@@ -666,11 +667,25 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
 
     @app.post("/api/system/reset")
     async def api_system_reset(request: Request):
+        from .personal_settings import require_idle
+        require_idle(app.state.runs)
         async with maintenance_lock:
+            require_idle(app.state.runs)
             with session_scope() as session:
                 workspace = service.reset_system(session, actor_id=request.state.actor_id)
+                from .cognition_models import MindCursor
+                # Commit a source barrier with the reset: a crash before runtime
+                # cleanup must not project old events into freshly seeded actors.
+                session.add(MindCursor(id='runtime', seq=app.state.runs.store.state()['cursor']))
+            with app.state.runs.store.connect() as db:
+                for table in ('speeches', 'memory_fts', 'calls', 'runs', 'events'):
+                    db.execute('DELETE FROM ' + table)
+            app.state.runs.cognition.initialize()
         await publish("conversation.message.updated", {"snapshot": workspace["data"]})
         return {"status": "ok", "workspace": workspace, "snapshot": workspace["data"]}
+
+    from .personal_settings import install_personal_settings
+    install_personal_settings(app, service, maintenance_lock, publish)
 
     @app.post("/api/window/preset")
     async def api_window_preset(payload: dict[str, Any]):
@@ -859,4 +874,3 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
         return await root_index()
 
     return app
-

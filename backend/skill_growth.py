@@ -96,7 +96,7 @@ class SkillGrowth:
                 raise ValueError('不支持的方法操作。')
             extra['revision'] = int(extra.get('revision', 0)) + 1
             row.extra_json = extra
-            return {'status': extra['lifecycle']}
+            return {'status': extra.get('lifecycle', 'active' if row.is_enabled else 'paused')}
 
     def next_candidate(self):
         with session_scope() as session:

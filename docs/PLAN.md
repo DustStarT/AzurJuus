@@ -1,5 +1,7 @@
 # AzurJuus 多智能体协作系统核心开发方案
 
+> 历史设计存档：实际执行采用 Hermes＋AzurJuus 调度、Vue 和本地 SQLite，不再以本文中的 LangGraph、必需 PostgreSQL/Redis 为当前要求。新增人格、关系和成长实现见 [认知系统说明](COGNITION_GUIDE.md)，验收以实际记录为准。
+
 ## Summary
 以现有 `桌面壳 + 前端聊天客户端` 为外层，重建一个本地优先、结构接近最终服务器版的后端核心：`FastAPI + WebSocket + PostgreSQL + Redis + 向量记忆库 + OpenAI 兼容模型层`。  
 本次方案按三阶段完整骨架设计，但实施顺序仍保持你拟定的三阶段推进，确保第一阶段就能跑通真实模型、消息流、工具安全边界，同时后续可以无缝接入秘书智能体、动态建群、阶段审核、朋友圈与社会化行为。

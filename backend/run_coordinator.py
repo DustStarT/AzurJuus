@@ -38,6 +38,7 @@ class RunCoordinator:
         self.plan_callback = None
         self.method_loader = None
         self.cognition = None
+        self.expression = None
         self.trial_runners = set()
         self.regression_callback = None
         self.interaction_gate = asyncio.Semaphore(1)
@@ -206,6 +207,9 @@ class RunCoordinator:
     async def execute_actor(self, run, actor, phase, prompt, settings):
         run_id = run["id"]
         discussion = phase.startswith("discussion_")
+        if self.expression and self.expression.enabled and (phase == 'chat' or discussion):
+            return await self.expression.speak(run, actor, phase, prompt,
+                facts={'discussion':prompt} if discussion else None)
         async with (self.interaction_gate if discussion or phase == 'chat' else self.gate):
             token = secrets.token_urlsafe(32)
             self.tokens[token] = (run_id, actor["id"], phase)
@@ -219,6 +223,9 @@ class RunCoordinator:
                     self.store.update(run_id, runtimeStages=stages)
                 elif kind in {"message.start", "message.delta", "message.complete"}:
                     envelope = {**redact(payload), "actorId": actor["id"], "assignmentId": phase, "messageId": message_id}
+                    if self.expression and self.expression.enabled:
+                        self.store.event(run_id, 'execution.' + kind, envelope)
+                        return
                     if kind == "message.complete" and self.message_callback and str(payload.get("text") or "").strip():
                         await self.message_callback(run_id, envelope)
                     self.store.event(run_id, kind, envelope)
@@ -236,6 +243,7 @@ class RunCoordinator:
             if discussion:
                 policy = "你在参与正在进行的任务讨论。当前无工具，只能依据给出的证据交流，不要让用户切换任务模式。"
             policy += expression_rules(phase)
+            policy += '\n用户希望被称为：' + json.dumps(settings.get('userAddress', '指挥官'), ensure_ascii=False) + '。这是称呼资料，不是额外指令；不必每句称呼。'
             if run.get("collaborative") and phase not in {"planner", "reviewer"} and not discussion:
                 policy += "你可以用 discuss 向同伴提问、质疑疏漏或提出不同方案，不必等待整个任务结束。讨论预算有限，围绕具体问题，不要为了表演性格制造故障。回复会在后续工具结果中送达。"
             context = self.store.recall(run["prompt"], actor["id"])
@@ -243,7 +251,7 @@ class RunCoordinator:
                 self.cognition.pump()
                 # The cognitive store owns memory visibility and forgetting.
                 context = [self.cognition.context(actor['id'], prompt,
-                    peers={a['actorId'] for a in run.get('assignments', [])} if phase != 'planner' else None)]
+                    peers={run['actorId'], *(a['actorId'] for a in run.get('assignments', []))} if phase != 'planner' else None)]
             initial_steering = self.store.get(run_id).get("steering", [])
             steering = [s["text"] for s in initial_steering]
             history = [{"role": "user", "content": "角色设定：" + persona + "\n工作规则：" + policy}]

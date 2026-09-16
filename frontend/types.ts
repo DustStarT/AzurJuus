@@ -30,7 +30,7 @@ export interface Message {
   body: string;
   type: string;
   createdAt: string;
-  metadata?: { runId?: string };
+  metadata?: { runId?: string; expression?: boolean; segments?: string[]; sourceIds?: string[] };
 }
 export interface Post {
   id: string;

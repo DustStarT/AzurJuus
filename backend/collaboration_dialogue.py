@@ -1,5 +1,6 @@
 """Nonblocking peer discussion alongside file execution, with durable messages."""
 import asyncio
+import logging
 from uuid import uuid4
 
 
@@ -65,9 +66,15 @@ class CollaborationDialogue:
             return {'discussionId':parent_id, 'status':'resolved', 'note':'观点已解决；并非工具执行证据。'}
         c.store.update(run_id, discussions=[*discussions, item])
         envelope = {'actorId':sender_id, 'assignmentId':'discussion_' + did, 'messageId':did + '-question', 'text':text}
-        if c.message_callback:
+        if c.expression and c.expression.enabled:
+            sender = next(a for a in run['actors'] if a['id'] == sender_id)
+            target = next(a for a in run['actors'] if a['id'] == target_id)
+            await c.expression.speak(run, sender, 'discussion_' + did + '-question',
+                '向同伴' + target['name'] + '表达以下观点，保持原意。', facts={'statement':text}, source=did + '-question')
+        elif c.message_callback:
             await c.message_callback(run_id, envelope)
-        c.store.event(run_id, 'message.complete', envelope)
+        if not c.expression or not c.expression.enabled:
+            c.store.event(run_id, 'message.complete', envelope)
         task = asyncio.create_task(self.reply(run_id, item), name='discussion-' + did)
         self.tasks[did] = (run_id, task)
         task.add_done_callback(lambda _: self.tasks.pop(did, None))
@@ -87,7 +94,17 @@ class CollaborationDialogue:
             run = c.store.get(run_id)
             actor = next(a for a in run['actors'] if a['id'] == item['actorId'])
             sender = next(a for a in run['actors'] if a['id'] == item['senderId'])
+            # Only the addressee's directed view is supplied; never expose the
+            # sender's private judgments to the recipient.
+            relation = None
+            try:
+                if c.cognition and c.cognition.enabled and c.cognition.inspect(actor['id'])['enabled']:
+                    relation = next((r for r in c.cognition.relationships(actor['id']) if r['peerId'] == sender['id']), None)
+            except Exception:
+                logging.getLogger(__name__).exception('Relationship context unavailable; continuing peer reply')
             prompt = f"同伴{sender['name']}在任务中对你说：{item['text']}\n总目标：{run['prompt']}\n请直接对同伴回应，可以质疑、承认疏忽、解释偏好或建议修正。只根据已有证据讨论；这是无工具讨论通道，不声称刚执行了任何新操作。简短自然，必要时空行分条说。"
+            if relation:
+                prompt += '\n你对这位同伴的已有认识：' + relation['summary'] + '。称呼对方，不要把同伴当指挥官；只接这次问题，不轮流总结。未亲历的事不要说成共同回忆。'
             reply = await c.execute_actor(run, actor, 'discussion_' + item['id'], prompt, c.settings_loader())
             if not str(reply or '').strip():
                 raise ValueError('同伴没有返回可显示的讨论回复。')

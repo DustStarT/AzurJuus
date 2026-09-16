@@ -1334,6 +1334,9 @@ class AzurJuusService:
                 WorkspaceSetting,
             ]
 
+            from .cognition_models import MindState, Experience, MindReceipt, MindCursor, MindOutbox
+            deletion_order = [MindOutbox, MindReceipt, Experience, MindState, MindCursor, *deletion_order]
+
             for model in deletion_order:
                 session.execute(delete(model))
                 session.flush()

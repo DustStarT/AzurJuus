@@ -162,13 +162,42 @@ class Cognition:
             state = self.state(session, actor_id)
             baseline = session.scalars(select(AgentRelationship).where(AgentRelationship.agent_id == actor_id)).all()
             result = []
+            shared = session.scalars(select(Experience).where(Experience.actor_id == actor_id,
+                Experience.forgotten.is_(False)).order_by(Experience.at.desc()).limit(100)).all()
             for row in baseline:
                 peer = session.get(Actor, row.peer_agent_id)
                 evidence = [v for v in state.data.get('appraisals', []) if v.get('peerId') == row.peer_agent_id]
+                encounters = [e for e in shared if row.peer_agent_id in e.data.get('peers', [])]
+                outcomes = list({e.run_id: e for e in encounters if e.kind == 'outcome' and e.run_id}.values())
+                familiarity = '尚无本应用中的共同经历；原作已有关系以设定为准，除此之外保持初识同事的分寸' if not encounters else '已经有过交流，可承接共同话题，但不要假定私下亲密'
+                if outcomes:
+                    familiarity = f'有 {len(outcomes)} 次可追溯的共同任务经历，具体能力信任仍以领域证据为准'
+                defined = state.data.get('relationshipNotes', {}).get(row.peer_agent_id, '')
                 result.append({'peerId': row.peer_agent_id, 'name': peer.name if peer else row.peer_agent_id,
                     'baseline': {'affinity': row.affinity_score, 'trust': row.trust_score, 'confidence': 'low'},
-                    'observations': evidence, 'summary': evidence[-1]['interpretation'] if evidence else '沿用初始关系，尚无可追溯的合作判断。'})
+                    'observations': evidence, 'familiarity': familiarity,
+                    'userDefined': defined,
+                    'sharedSources': [e.id for e in encounters[:3]],
+                    'summary': ('用户设定的关系：' + defined + '。' if defined else '') + familiarity + '。' + (evidence[-1]['interpretation'] if evidence else '尚无可追溯的能力判断。')})
             return result
+
+    def set_relationship(self, actor_id, peer_id, description):
+        with session_scope() as session:
+            state = self.state(session, actor_id)
+            peer = session.get(Actor, peer_id)
+            if not peer or peer.kind != 'agent' or peer_id == actor_id:
+                raise ValueError('请选择另一位已存在的成员。')
+            notes = dict(state.data.get('relationshipNotes', {}))
+            if description.strip():
+                notes[peer_id] = description.strip()[:400]
+            else:
+                notes.pop(peer_id, None)
+            state.data = {**state.data, 'relationshipNotes': notes}
+            state.version += 1
+            session.add(MindOutbox(id=identity(actor_id, 'relationship', state.version),
+                payload={'actorId':actor_id, 'peerId':peer_id, 'version':state.version, 'origin':'user'}))
+        self.flush_outbox()
+        return self.relationships(actor_id)
 
     def context(self, actor_id, query='', peers=None, social=False):
         if not self.enabled:
@@ -202,7 +231,9 @@ class Cognition:
                 'memories': memories,
                 'relationships': [{'peerId':r['peerId'], 'name':r['name'],
                     'approach':r['observations'][-1].get('approach','neutral') if r['observations'] else 'neutral'} for r in relations[:6]] if social
-                    else [{'peerId': r['peerId'], 'name': r['name'], 'judgments': r['observations'][-2:]} for r in relations[:6]]}
+                    else [{'peerId': r['peerId'], 'name': r['name'], 'familiarity': r['familiarity'],
+                        'userDefinedRelationship': r['userDefined'],
+                        'sharedSources': r['sharedSources'], 'judgments': r['observations'][-2:]} for r in relations[:6]]}
             from .character_behavior import behavior_context
             with session_scope() as session:
                 name = session.get(Actor, actor_id).name
@@ -252,6 +283,9 @@ class Cognition:
                 session.execute(update(Experience).where(Experience.actor_id == actor_id).values(forgotten=True))
                 state.data = empty_state()
             state.version += 1
+            session.add(MindOutbox(id=identity(actor_id, 'configure', state.version),
+                payload={'actorId':actor_id, 'version':state.version, 'reset':reset}))
+        self.flush_outbox()
         return self.inspect(actor_id)
 
     def reflection_candidate(self):

@@ -18,6 +18,8 @@ from backend.database import session_scope
 
 
 def configure_test_env(monkeypatch, tmp_path: Path, *, social_enabled: bool = False) -> None:
+    # Legacy protocol fixtures explicitly exercise the pre-expression path.
+    monkeypatch.setenv('AZURJUUS_EXPRESSION_ENABLED', '0')
     monkeypatch.setenv("AZURJUUS_EXECUTION_BACKEND", "legacy-test")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(parents=True, exist_ok=True)

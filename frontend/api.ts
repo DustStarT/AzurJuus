@@ -1,5 +1,6 @@
 import { reactive, ref, shallowRef } from "vue";
 import type { Workspace, Run, RunEvent, ToolCall } from "./types";
+import { liveSpeechIds } from './speechQueue';
 import { preloadAssets } from "./assets";
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {
@@ -123,6 +124,7 @@ export function useWorkspace() {
         });
         if (event.type === "message.start") { entry.text = ""; entry.done = false; }
         else if (event.type === "message.complete") {
+          if (p.expression) liveSpeechIds.add(messageId);
           entry.text = String(p.text || entry.text);
           entry.done = true;
           scheduleRefresh();

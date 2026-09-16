@@ -1,0 +1,76 @@
+{
+  "status": "passed",
+  "checks": [
+    "Live sentences appear individually at reading pace; completion does not flush the queue",
+    "Same message DOM node survives 60 deltas, persistence and final refresh; no blank frame; IME/focus/selection preserved",
+    "Delete and clear buttons remove records after reload while preserving chat and produced files",
+    "Mind panel corrects and forgets sourced experiences without replacing the composer",
+    "Three actor-paced bubbles persist; legacy foreign persona shown as neutral notice; method panel opens; group deletion survives reload",
+    "User avatar/name save; directed relationship edit; guarded memory clearing through settings"
+  ],
+  "continuity": {
+    "frames": 506,
+    "missing": 0,
+    "replaced": 0,
+    "empty": 0
+  },
+  "sentenceReleases": [
+    {
+      "count": 1,
+      "at": 2438.89999999851
+    },
+    {
+      "count": 2,
+      "at": 2791.39999999851
+    },
+    {
+      "count": 3,
+      "at": 3458.7000000029802
+    },
+    {
+      "count": 4,
+      "at": 4142.20000000298
+    },
+    {
+      "count": 5,
+      "at": 4808.89999999851
+    },
+    {
+      "count": 6,
+      "at": 5458.89999999851
+    },
+    {
+      "count": 7,
+      "at": 6141.20000000298
+    },
+    {
+      "count": 8,
+      "at": 6807.89999999851
+    },
+    {
+      "count": 9,
+      "at": 7490.29999999702
+    },
+    {
+      "count": 10,
+      "at": 8157.39999999851
+    },
+    {
+      "count": 11,
+      "at": 8807.39999999851
+    },
+    {
+      "count": 12,
+      "at": 9491.10000000149
+    },
+    {
+      "count": 13,
+      "at": 10158.5
+    },
+    {
+      "count": 14,
+      "at": 10841.70000000298
+    }
+  ],
+  "errors": []
+}

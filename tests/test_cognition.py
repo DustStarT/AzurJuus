@@ -239,3 +239,33 @@ def test_interrupted_trial_is_recoverable(world):
     assert c.growth.next_candidate()==(a,sid)
     with session_scope() as session:
         assert not c.growth.row(session,a,sid).is_enabled
+
+
+def test_configuration_changes_publish_versioned_events(world):
+    c, _, (a,*_) = world
+    cursor = c.store.state()['cursor']
+    before = c.cognition.inspect(a)['version']
+    state = c.cognition.configure(a, enabled=False)
+    events = [e for e in c.store.events(cursor) if e['type'] == 'mind.changed']
+    assert state['version'] == before + 1
+    assert events[-1]['payload']['actorId'] == a
+    assert events[-1]['payload']['version'] == state['version']
+
+
+@pytest.mark.asyncio
+async def test_discussion_round_limit_and_resolution(world, monkeypatch):
+    c, _, (a,b,*_) = world
+    run,_ = c.store.create({'prompt':'合成讨论','actorId':a,'collaborative':True,
+        'actors':[{'id':a,'name':'A'},{'id':b,'name':'B'}]}, 'discussion-round-test')
+    c.store.update(run['id'], assignments=[{'actorId':a},{'actorId':b}])
+    async def no_reply(*args): pass
+    monkeypatch.setattr(c.dialogue,'reply',no_reply)
+    c.message_callback = None
+    first = await c.dialogue.send(run['id'],a,{'actorId':b,'text':'检查哪些附件？'})
+    second = await c.dialogue.send(run['id'],a,{'actorId':b,'text':'还有一个例外','threadId':first['discussionId']})
+    with pytest.raises(ValueError, match='两轮'):
+        await c.dialogue.send(run['id'],a,{'actorId':b,'text':'继续','threadId':second['discussionId']})
+    result = await c.dialogue.send(run['id'],a,{'actorId':b,'text':'按清单核验即可','kind':'resolved','threadId':first['discussionId']})
+    assert result['status']=='resolved'
+    assert all(d.get('resolution') == '按清单核验即可' for d in c.store.get(run['id'])['discussions'])
+    await c.dialogue.drain(run['id'])

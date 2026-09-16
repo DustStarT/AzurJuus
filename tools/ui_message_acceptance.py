@@ -31,10 +31,11 @@ def main():
             page.locator('.conversation-card').filter(has_text=fixture['conversationTitle']).click()
             mid = fixture['messageId']
             locator = page.locator('[data-message-id="' + mid + '"]')
-            locator.locator('.streaming').wait_for()
+            locator.locator('.message-bubble').first.wait_for()
             page.evaluate('''mid => {
                 window.observedMessage = document.querySelector('[data-message-id="' + mid + '"]');
                 window.continuity = {frames:0, missing:0, replaced:0, empty:0};
+                window.sentenceReleases = [];
                 window.monitorMessage = true;
                 function tick() {
                     const current = document.querySelector('[data-message-id="' + mid + '"]');
@@ -43,6 +44,9 @@ def main():
                     if (!current) stats.missing++;
                     if (current !== window.observedMessage) stats.replaced++;
                     if (!current?.querySelector('.message-bubble')?.textContent.trim()) stats.empty++;
+                    const count = current?.querySelectorAll('.sentence-enter').length || 0;
+                    if (count && count !== window.sentenceReleases.at(-1)?.count)
+                        window.sentenceReleases.push({count, at:performance.now()});
                     if (window.monitorMessage) requestAnimationFrame(tick);
                 }
                 requestAnimationFrame(tick);
@@ -58,12 +62,21 @@ def main():
             while page.request.get(base + '/api/runs/' + fixture['runId']).json()['run']['status'] != 'completed':
                 assert time.monotonic() < deadline, 'Stream fixture did not finish'
                 page.wait_for_timeout(100)
-            page.wait_for_timeout(1200)
-            assert locator.locator('.streaming').count() == 0, page.request.get(base + '/api/runs/' + fixture['runId']).json()['run']
+            page.wait_for_function('''mid => !document.querySelector('[data-message-id="' + mid + '"] .speech-stack')?.hasAttribute('aria-busy')''', arg=mid)
             stats = page.evaluate('window.monitorMessage = false; window.continuity')
             assert stats['frames'] > 30 and not any(stats[k] for k in ('missing','replaced','empty')), stats
             assert composer.evaluate('e => document.activeElement === e && e.selectionStart === 2 && e.selectionEnd === 5')
             report['continuity'] = stats
+            releases = page.evaluate('window.sentenceReleases')
+            assert len(releases) >= 5, releases
+            for index, (previous, following) in enumerate(zip(releases, releases[1:])):
+                assert following['count'] == previous['count'] + 1, releases
+                # The first sample observes a sentence that was already visible
+                # before the monitor attached; it is not its insertion timestamp.
+                if index:
+                    assert following['at'] - previous['at'] >= 500, releases
+            report['sentenceReleases'] = releases
+            report['checks'].append('Live sentences appear individually at reading pace; completion does not flush the queue')
             report['checks'].append('Same message DOM node survives 60 deltas, persistence and final refresh; no blank frame; IME/focus/selection preserved')
             assert locator.locator('.message-bubble').count() == 3
             original_text = ''.join(locator.locator('.message-bubble').all_text_contents())
@@ -112,6 +125,12 @@ def main():
             page.wait_for_timeout(400)
             assert panel.locator('article').filter(has_text='我会在提交前提醒检查合成附件。').count() == 0
             panel.screenshot(path=str(out/'mind-panel.png'))
+            relationship = panel.locator('article').filter(has=page.get_by_role('button', name='设定关系')).first
+            relationship.get_by_role('button', name='设定关系').click()
+            relationship.get_by_label('关系说明').fill('配合过的同事，可以直接指出问题。')
+            relationship.get_by_role('button', name='保存关系').click()
+            page.wait_for_timeout(400)
+            assert '配合过的同事' in relationship.inner_text()
             report['checks'].append('Mind panel corrects and forgets sourced experiences without replacing the composer')
             page.get_by_role('dialog', name='方法与成长').get_by_role('button', name='关闭', exact=True).click()
             page.locator('.conversation-card').filter(has_text='可删除的合成协作群').click()
@@ -121,6 +140,23 @@ def main():
             page.get_by_label('消息输入').wait_for()
             assert page.locator('.conversation-card').filter(has_text='可删除的合成协作群').count() == 0
             report['checks'].append('Three actor-paced bubbles persist; legacy foreign persona shown as neutral notice; method panel opens; group deletion survives reload')
+            page.get_by_label('打开设置', exact=True).click()
+            settings = page.get_by_role('dialog', name='港区设置')
+            settings.get_by_role('button', name='我的资料与数据').click()
+            settings.get_by_label('希望被怎样称呼').fill('界面测试称呼')
+            import base64
+            png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+            settings.get_by_label('更换头像').set_input_files({'name':'avatar.png', 'mimeType':'image/png', 'buffer':png})
+            settings.get_by_role('button', name='保存设置', exact=True).click()
+            page.wait_for_function("fetch('/api/workspace/load').then(r=>r.json()).then(d=>d.workspace.data.user.name==='界面测试称呼' && d.workspace.data.user.avatarUrl.startsWith('data:image/png'))")
+            settings.get_by_label('清理范围').select_option('memory')
+            assert settings.get_by_role('button', name='执行清理').is_disabled()
+            settings.get_by_label('输入“确认清理”后执行').fill('确认清理')
+            settings.get_by_role('button', name='执行清理').click()
+            page.get_by_label('消息输入').wait_for()
+            page.wait_for_timeout(500)
+            assert page.request.get(base + f'/api/actors/{aid}/experiences').json()['experiences'] == []
+            report['checks'].append('User avatar/name save; directed relationship edit; guarded memory clearing through settings')
             assert not errors, errors
             report.update(status='passed', errors=errors)
             browser.close()

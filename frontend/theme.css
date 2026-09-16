@@ -5,8 +5,8 @@
   font-synthesis: none;
   --cyan: #50c4e5;
   --blue: #4b9cbd;
-  --ink: #3e4b58;
-  --muted: #8b96a4;
+  --ink: #293d4c;
+  --muted: #6c8190;
   --line: rgba(124, 152, 174, 0.18);
   --glass: rgba(255, 255, 255, 0.66);
   --shadow: 0 3px 10px #38586e12;
@@ -109,9 +109,9 @@ a {
 }
 button {
   transition:
-    background 150ms var(--ease),
-    color 150ms var(--ease),
-    transform 150ms var(--ease);
+    background 120ms var(--ease),
+    color 120ms var(--ease),
+    transform 120ms var(--ease);
 }
 button:active:not(:disabled) {
   transform: scale(0.97);
@@ -130,7 +130,7 @@ button:active:not(:disabled) {
 .juus-shell {
   height: 100%;
   display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
+  grid-template-columns: 76px minmax(0, 1fr);
   gap: 18px;
   padding: 0 18px 0 0;
   isolation: isolate;
@@ -357,7 +357,7 @@ button:active:not(:disabled) {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(285px, 33%) minmax(0, 1fr);
+  grid-template-columns: 310px minmax(0, 1fr);
   gap: 19px;
   padding-bottom: 18px;
 }
@@ -424,12 +424,12 @@ button:active:not(:disabled) {
   gap: 14px;
   flex-shrink: 0;
   width: 100%;
-  height: 103px;
+  height: 90px;
   padding: 15px 15px;
   text-align: left;
   border: 1px solid #fff9;
-  border-radius: 17px;
-  background: linear-gradient(105deg, #ffffffce, #ffffff8a);
+  border-radius: 12px;
+  background: #f5f9fcdb;
   box-shadow:
     0 2px 6px #536e8621,
     0 0 0 1px #8f9aaa1a;
@@ -723,13 +723,14 @@ button:active:not(:disabled) {
   color: #aab4bf;
 }
 .message-bubble {
+  max-width: 36em;
   position: relative;
   padding: 13px 18px;
-  line-height: 1.85;
+  line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: #4c5863;
-  background: #ffffffe0;
+  color: #293d4c;
+  background: #fffffff5;
   border: 1px solid #ffffff99;
   border-radius: 3px 17px 17px 17px;
   font-size: 14px;
@@ -2016,7 +2017,7 @@ button:active:not(:disabled) {
 }
 @media (min-width: 1600px) {
   .juus-shell {
-    grid-template-columns: 130px minmax(0, 1fr);
+    grid-template-columns: 76px minmax(0, 1fr);
     gap: 23px;
     padding-right: 24px;
   }
@@ -2031,20 +2032,20 @@ button:active:not(:disabled) {
     height: 85px;
   }
   .chat-layout {
-    grid-template-columns: minmax(350px, 36%) minmax(0, 1fr);
+    grid-template-columns: 330px minmax(0, 1fr);
     gap: 24px;
   }
   .conversation-card {
-    height: 121px;
-    gap: 19px;
-    padding: 20px;
+    height: 94px;
+    gap: 12px;
+    padding: 14px;
   }
   .conversation-card > .avatar {
-    width: 71px;
-    height: 71px;
+    width: 52px;
+    height: 52px;
   }
   .conversation-title strong {
-    font-size: 20px;
+    font-size: 17px;
   }
   .conversation-copy p {
     font-size: 14px;

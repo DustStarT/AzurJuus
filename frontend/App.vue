@@ -170,6 +170,12 @@ async function selectConversation(c: Conversation) {
 function scrollBottom() {
   if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight;
 }
+async function speechRevealed() {
+  if (atBottom.value) {
+    await nextTick();
+    scrollBottom();
+  }
+}
 function onScroll() {
   const el = scroller.value;
   if (el)
@@ -617,7 +623,8 @@ onUnmounted(() => {
                       }}</strong
                       ><time>{{ time(m.createdAt) }}</time>
                     </div>
-                    <SpeechBubbles :text="m.body" :streaming="m.streaming" :single="m.speakerId === 'commander'" />
+                    <details v-if="m.type === 'task_progress' && !m.metadata?.expression"><summary>历史工作回复</summary><div class="message-bubble">{{ m.body }}</div></details>
+                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :single="m.speakerId === 'commander'" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
                   </div>
                 </article>
                 <div

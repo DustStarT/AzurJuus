@@ -55,7 +55,7 @@ def build_server(port=8879):
             c.store.event(rid, "message.start", envelope)
             text = ""
             for index in range(60):
-                delta = f"流{index:02d} " + ("\n\n" if index in {15, 35} else "")
+                delta = f"流{index:02d} " + ("。" if index % 5 == 4 else "") + ("\n\n" if index in {15, 35} else "")
                 text += delta
                 c.store.event(rid, "message.delta", {**envelope,"delta":delta})
                 if index % 6 == 0:

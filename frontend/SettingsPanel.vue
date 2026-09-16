@@ -16,6 +16,31 @@ const settings = ref<Settings>({
   llmApiKey: "",
 });
 const reduced = ref(localStorage.getItem("azur-reduced-motion") === "true");
+const speechPace = ref(localStorage.getItem('azur-speech-pace') || 'natural');
+const userName = ref(props.workspace.data.user.name);
+const userAvatar = ref(props.workspace.data.user.avatarUrl || '');
+const clearing = ref(''), confirmation = ref('');
+async function avatarFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 500000) {
+    error.value = '请选择不超过 500KB 的 PNG、JPEG 或 WebP 图片。'; return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => { userAvatar.value = String(reader.result); };
+  reader.onerror = () => { error.value = '无法读取头像图片。'; };
+  reader.readAsDataURL(file);
+}
+async function clearData() {
+  if (!clearing.value || confirmation.value !== '确认清理') return;
+  busy.value = true; error.value = '';
+  try {
+    await api(clearing.value === 'reset' ? '/api/system/reset' : `/api/system/clear/${clearing.value}`, {});
+    // Drop stale stream/UI state only after the server has committed the reset.
+    window.location.reload();
+  } catch(e) { error.value = (e as Error).message; }
+  finally { busy.value = false; }
+}
 const selected = ref<Agent>(),
   persona = ref("");
 const tabs = [
@@ -23,12 +48,16 @@ const tabs = [
   { id: "agents", label: "港区成员", icon: "users" },
   { id: "appearance", label: "外观与动态", icon: "circle" },
   { id: "skills", label: "技能档案", icon: "sparkle" },
+  { id: "personal", label: "我的资料与数据", icon: "users" },
 ] as const;
 async function save() {
   busy.value = true;
   error.value = "";
   saved.value = false;
   try {
+    if (userName.value !== props.workspace.data.user.name || userAvatar.value !== (props.workspace.data.user.avatarUrl || '')) {
+      await api('/api/profile', {name: userName.value, avatar: userAvatar.value});
+    }
     await api("/api/workspace/save", {
       workspace: { settings: settings.value },
     });
@@ -37,6 +66,7 @@ async function save() {
     });
     settings.value.llmApiKey = "";
     localStorage.setItem("azur-reduced-motion", String(reduced.value));
+    localStorage.setItem('azur-speech-pace', speechPace.value);
     document.documentElement.classList.toggle("reduced-motion", reduced.value);
     emit("saved");
     saved.value = true;
@@ -121,6 +151,30 @@ async function connectRoster() {
         </nav>
         <div class="settings-content">
           <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+          <template v-if="tab === 'personal'">
+            <h3>我的资料</h3>
+            <label>希望被怎样称呼<input v-model="userName" maxlength="40" /></label>
+            <Avatar :agent="{...workspace.data.user, name:userName, avatarUrl:userAvatar}" />
+            <label>更换头像<input type="file" accept="image/png,image/jpeg,image/webp" @change="avatarFile" /></label>
+            <button class="text-button" @click="userAvatar = ''">使用文字头像</button>
+            <p class="field-hint">图片保存在本地，最大 500KB。点击下方保存设置后生效，新对话会使用你的称呼。</p>
+            <div class="section-divider"></div>
+            <h3>记录与记忆</h3>
+            <p class="muted">清理前先停止所有任务。以下操作均不会删除工作区内的实际文件。</p>
+            <label>清理范围<select v-model="clearing" @change="confirmation = ''">
+              <option value="">请选择</option>
+              <option value="records">清空聊天和工作列表（保留长期记忆）</option>
+              <option value="memory">忘记长期经历与关系判断（保留聊天和技能）</option>
+              <option value="reset">初始化系统（清除记录、成长、技能与配置）</option>
+            </select></label>
+            <p v-if="clearing === 'records'" class="field-hint">清空聊天正文，归档工作记录；任务审计记录仍保留，人物可能仍记得长期经历。</p>
+            <p v-if="clearing === 'memory'" class="field-hint">清除长期经历、推断与承诺；当前聊天内容仍可作为上下文。要从全新状态开始，请选择初始化。</p>
+            <p v-if="clearing === 'reset'" class="error-message">恢复初始角色和设置，需要重新配置模型。此操作不是磁盘安全擦除，历史备份和诊断日志仍可能保留。</p>
+            <template v-if="clearing">
+              <label>输入“确认清理”后执行<input v-model="confirmation" autocomplete="off" /></label>
+              <button class="soft-button danger" :disabled="busy || confirmation !== '确认清理'" @click="clearData">执行清理</button>
+            </template>
+          </template>
           <template v-if="tab === 'connection'"
             ><span class="eyebrow">01 / MODEL</span>
             <h3>连接你的模型</h3>
@@ -241,6 +295,7 @@ async function connectRoster() {
           <template v-if="tab === 'appearance'"
             ><span class="eyebrow">DISPLAY & LIFE</span>
             <h3>让港区慢下来</h3>
+            <label>消息节奏<select v-model="speechPace"><option value="instant">即时</option><option value="natural">自然</option><option value="calm">舒缓</option></select></label>
             <label
               >窗口尺寸<select v-model="settings.resolutionPreset">
                 <option value="compact">紧凑</option>

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { api } from './api';
+import CharacterCard from './CharacterCard.vue';
 const props = defineProps<{actorId:string}>();
 type Source = {text:string;sourceId:string};
 type Mind = {version:number;enabled:boolean;data:{focus:Source[];commitments:Source[];mood:string};anchor:{note:string};error?:string};
 type Experience = {id:string;text:string;sourceSeq:number;kind:string;data:{userCorrection?:string}};
 const mind = ref<Mind>();
 const experiences = ref<Experience[]>([]);
-const relations = ref<{peerId:string;name:string;summary:string}[]>([]);
+const relations = ref<{peerId:string;name:string;summary:string;userDefined?:string}[]>([]);
+const relationshipEdit = ref(''), relationshipText = ref('');
 const cursor = ref<number|null>(null), error = ref(''), editing = ref(''), correction = ref('');
 let active = true, generation = 0, timer = 0;
 async function load() {
@@ -42,6 +44,7 @@ onUnmounted(() => { active = false; clearTimeout(timer); window.removeEventListe
 </script>
 <template>
   <section aria-label="人物经历与关系">
+    <CharacterCard :actor-id="actorId" />
     <p v-if="error" class="error-message">{{ error }}</p>
     <p v-if="mind?.error" class="muted">认知更新暂不可用，聊天与任务仍可继续。</p>
     <label><input type="checkbox" :checked="mind?.enabled" @change="action('mind', {enabled:($event.target as HTMLInputElement).checked})"> 使用持续经历与关系</label>
@@ -52,7 +55,16 @@ onUnmounted(() => { active = false; clearTimeout(timer); window.removeEventListe
     <h3>记得的承诺</h3>
     <p v-for="item in mind?.data.commitments || []" :key="item.sourceId + item.text">{{ item.text }}</p>
     <h3>关系与共同经历</h3>
-    <article v-for="peer in relations" :key="peer.peerId" class="assignment"><strong>{{ peer.name }}</strong><p>{{ peer.summary }}</p></article>
+    <p class="muted">这里记录的是她对同伴的认识，双方不必相同。你可以设定既有关系；设定不会伪装成真实任务经历。</p>
+    <article v-for="peer in relations" :key="peer.peerId" class="assignment">
+      <strong>{{ peer.name }}</strong><p>{{ peer.summary }}</p>
+      <button class="text-button" @click="relationshipEdit = peer.peerId; relationshipText = peer.userDefined || ''">设定关系</button>
+      <form v-if="relationshipEdit === peer.peerId" @submit.prevent="action(`relationships/${peer.peerId}`, {description:relationshipText}); relationshipEdit = ''">
+        <textarea v-model="relationshipText" aria-label="关系说明" maxlength="400" placeholder="例如：常合作的同伴，平时可以直说；涉及新领域仍需核验证据。"></textarea>
+        <p class="muted">只影响此人物看待对方的方式。留空保存可移除设定。</p>
+        <button class="primary-button">保存关系</button>
+      </form>
+    </article>
     <h3>个人经历</h3>
     <p class="muted">删除聊天只隐藏聊天记录；忘记经历会同时排除相关判断和承诺，保留任务审计事实。</p>
     <article v-for="item in experiences" :key="item.id" class="assignment">

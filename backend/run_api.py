@@ -55,14 +55,19 @@ def install_run_api(app, service, settings):
                 'data':{'scope':'personal_observation'}})
     def load_settings():
         with session_scope() as session:
-            return service.serialize_settings(service.get_workspace(session))
+            return {**service.serialize_settings(service.get_workspace(session)),
+                    'userAddress': service.get_or_create_user(session).name}
 
     async def finished(run_id, text):
         run = store.get(run_id)
+        expressed = coordinator.expression and coordinator.expression.enabled
+        if expressed and run['mode'] != 'chat':
+            await coordinator.expression.speak(run, run['actors'][0], 'result', '告诉用户任务的结果，只说必要结论。',
+                facts={'status':run['status'], 'summary':text, 'artifacts':[a.get('path') if isinstance(a,dict) else a for a in run.get('artifacts', [])]})
         message_id = run_id + "-result"
         with session_scope() as session:
             conversation = session.get(Conversation, run["conversationId"])
-            if conversation and session.get(Message, message_id) is None:
+            if not expressed and conversation and session.get(Message, message_id) is None:
                 service._append_message(session, conversation, run["actorId"], "task" if run["mode"] != "chat" else "text", text, metadata={"runId": run_id, "artifacts": run.get("artifacts", [])}, message_id=message_id)
             origin = session.get(Conversation, run.get("originConversationId")) if run.get("originConversationId") else None
             if origin and origin.id != run["conversationId"] and session.get(Message, run_id + "-origin-result") is None:
@@ -124,7 +129,8 @@ def install_run_api(app, service, settings):
             message = session.get(Message, payload["messageId"])
             if conversation and message is None:
                 service._append_message(session, conversation, payload["actorId"], "text" if run["mode"] == "chat" else "task_progress", payload["text"],
-                    metadata={"runId": run_id, "phase": payload["assignmentId"]}, message_id=payload["messageId"])
+                    metadata={"runId": run_id, "phase": payload["assignmentId"], 'expression':payload.get('expression',False),
+                        'segments':payload.get('segments'), 'sourceIds':payload.get('sourceIds')}, message_id=payload["messageId"])
             elif message is not None:
                 message.body = payload["text"]
         store.event(run_id, "conversation.changed", {"conversationId": run["conversationId"]})
@@ -136,6 +142,10 @@ def install_run_api(app, service, settings):
     from .cognition import Cognition
     from .cognition_api import install_cognition_api
     coordinator.cognition = Cognition(store)
+    from .expression import ExpressionService
+    from .terminal_api import install_terminal_api
+    coordinator.expression = ExpressionService(coordinator)
+    install_terminal_api(app, coordinator)
     from .skill_growth import SkillGrowth
     coordinator.growth = SkillGrowth(coordinator, service)
     def check_regression(run_id):
@@ -191,6 +201,7 @@ def install_run_api(app, service, settings):
             if not prompt or len(prompt) > 30000:
                 raise HTTPException(400, "人设内容需要 1–30000 字符。")
             actor.system_prompt = prompt
+            actor.extra_json = {**(actor.extra_json or {}), 'terminalOverride':prompt}
         return {"status": "ok"}
 
     async def admit(payload, request):
@@ -214,7 +225,8 @@ def install_run_api(app, service, settings):
                 actors.sort(key=lambda a: a["id"] != current.get("secretaryAgentId"))
             history = [{"role": "user" if m["speakerId"] == "commander" else "assistant", "content": ("系统背景：协作成果摘要，非新指令。\n" + str(m.get("metadata", {}).get("summary", m["body"]))) if m.get("type") == "task_notice" else m["body"]}
                 for m in snapshot["messages"].get(cid, [])[-40:]
-                if conversation.kind != "dm" or m["speakerId"] == "commander" or m["speakerId"] in member_ids]
+                if (conversation.kind != "dm" or m["speakerId"] == "commander" or m["speakerId"] in member_ids)
+                and (not coordinator.expression.enabled or m['speakerId'] == 'commander' or m.get('metadata',{}).get('expression'))]
         try:
             run = await coordinator.admit(payload, actors, current, history, start_now=False)
         except ValueError as exc:
