@@ -1,0 +1,24 @@
+2026-09-17 19:07:02,605 INFO run_agent: OpenAI client created (agent_init, shared=True) thread=Thread-14 (_build):25608 provider=custom base_url=http://127.0.0.1:12936/v1 model=azur-test
+2026-09-17 19:07:02,848 INFO agent.model_metadata: Cached context length azur-test@http://127.0.0.1:12936/v1 -> 131,072 tokens
+2026-09-17 19:07:03,042 INFO tui_gateway.server: tui prompt accepted: ui_session=f7f2b653 session_key=202609...3ac3 agent_session_id=20260917_190658_443ac3 kind=user chars=47 images=0
+2026-09-17 19:07:03,226 INFO [20260917_190658_443ac3] agent.turn_context: conversation turn: session=20260917_190658_443ac3 model=azur-test provider=custom platform=tui history=0 msg='Call workspace list_dir then report its result.'
+2026-09-17 19:07:03,562 INFO agent.auxiliary_client: Auxiliary auto-detect: using main provider custom (azur-test)
+2026-09-17 19:07:03,565 INFO agent.auxiliary_client: Auxiliary title_generation: using custom (azur-test) at http://127.0.0.1:12936/v1/
+2026-09-17 19:07:03,580 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-34 (<lambda>):37152 provider=custom base_url=http://127.0.0.1:12936/v1 model=azur-test
+2026-09-17 19:07:04,088 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #1: model=azur-test provider=custom in=? out=? total=? latency=0.6s usage=unavailable
+2026-09-17 19:07:04,172 INFO [20260917_190658_443ac3] agent.tool_executor: tool mcp__azurjuus__workspace completed (0.05s, 172 chars)
+2026-09-17 19:07:04,197 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #2: model=azur-test provider=custom in=? out=? total=? latency=0.0s usage=unavailable
+2026-09-17 19:07:04,243 INFO [20260917_190658_443ac3] agent.tool_executor: tool mcp__azurjuus__workspace completed (0.03s, 172 chars)
+2026-09-17 19:07:04,290 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #3: model=azur-test provider=custom in=? out=? total=? latency=0.0s usage=unavailable
+2026-09-17 19:07:05,273 INFO [20260917_190658_443ac3] agent.tool_executor: tool mcp__azurjuus__workspace completed (0.02s, 172 chars)
+2026-09-17 19:07:05,318 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #4: model=azur-test provider=custom in=? out=? total=? latency=0.0s usage=unavailable
+2026-09-17 19:07:05,336 INFO [20260917_190658_443ac3] agent.tool_executor: tool mcp__azurjuus__workspace completed (0.01s, 172 chars)
+2026-09-17 19:07:05,383 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #5: model=azur-test provider=custom in=? out=? total=? latency=0.0s usage=unavailable
+2026-09-17 19:07:05,403 INFO [20260917_190658_443ac3] agent.tool_executor: tool mcp__azurjuus__workspace completed (0.01s, 172 chars)
+2026-09-17 19:07:05,444 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #6: model=azur-test provider=custom in=? out=? total=? latency=0.0s usage=unavailable
+2026-09-17 19:07:05,463 INFO [20260917_190658_443ac3] agent.tool_executor: tool mcp__azurjuus__workspace completed (0.01s, 172 chars)
+2026-09-17 19:07:05,506 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #7: model=azur-test provider=custom in=? out=? total=? latency=0.0s usage=unavailable
+2026-09-17 19:07:05,525 INFO [20260917_190658_443ac3] agent.tool_executor: tool mcp__azurjuus__workspace completed (0.01s, 172 chars)
+2026-09-17 19:07:05,625 INFO [20260917_190658_443ac3] agent.conversation_loop: API call #8: model=azur-test provider=custom in=? out=? total=? latency=0.1s usage=unavailable
+2026-09-17 19:07:05,642 INFO [20260917_190658_443ac3] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=azur-test api_calls=8/80 budget=8/80 tool_turns=7 last_msg_role=assistant response_len=13 session=20260917_190658_443ac3
+2026-09-17 19:07:05,671 INFO [20260917_190658_443ac3] tui_gateway.server: tui turn finished: ui_session=f7f2b653 session_key=202609...3ac3 agent_session_id=20260917_190658_443ac3 status=complete error_retained=False duration=2.6s

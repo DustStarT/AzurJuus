@@ -11,7 +11,7 @@ from backend.database import session_scope
 from backend.models import Message, SkillRun
 from backend.run_coordinator import RunCoordinator
 from backend.run_store import RunStore
-from test_backend_flows import configure_test_env
+from conftest import configure_test_env
 
 
 def test_peer_discussion_private_notice_and_group_removal(monkeypatch, tmp_path):

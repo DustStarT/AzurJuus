@@ -1,0 +1,1267 @@
+{
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\annotate_preview_tool.py": [
+1789135809774171500,
+3947,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\ansi_strip.py": [
+1789135809774670600,
+4341,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\apply_layout_tool.py": [
+1789135809775671000,
+2335,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval.py": [
+1789135809776669600,
+60076,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval_context.py": [
+1789135809777669300,
+14454,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval_detection.py": [
+1789135809778169800,
+80844,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval_floors.py": [
+1789135809778669300,
+9679,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval_gateway_wait.py": [
+1789135809779169700,
+8362,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval_human_wait.py": [
+1789135809780169700,
+8416,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval_prompt.py": [
+1789135809780669400,
+15007,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\approval_smart.py": [
+1789135809781170100,
+7282,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\arg_coercion.py": [
+1789135809781170100,
+9068,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\async_delegation.py": [
+1789135809782683900,
+56377,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\audio_container.py": [
+1789135809783682400,
+2674,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\binary_extensions.py": [
+1789135809784681900,
+2274,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\blueprints.py": [
+1789135809786188200,
+9210,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\bot_failure_reasons.py": [
+1789135809787687700,
+3516,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\bot_live_delivery.py": [
+1789135809789193100,
+8872,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\bot_mode_dm.py": [
+1789135809789692400,
+33243,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\bot_mode_probe.py": [
+1789135809790688200,
+15592,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\bot_relay.py": [
+1789135809791188100,
+24582,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_camofox.py": [
+1789135809792187500,
+27352,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_camofox_state.py": [
+1789135809792688000,
+1566,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_cdp_tool.py": [
+1789135809793187000,
+22348,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_dialog_tool.py": [
+1789135809793687200,
+5405,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_extension_router.py": [
+1789135809794186500,
+6355,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_lightpanda.py": [
+1789135809795187300,
+13117,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_supervisor.py": [
+1789135809795687400,
+27452,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_supervisor_dialogs.py": [
+1789135809796187700,
+15371,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_supervisor_frames.py": [
+1789135809796687400,
+8335,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool.py": [
+1789135809797687400,
+66885,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_cdp.py": [
+1789135809798687600,
+6285,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_cloud.py": [
+1789135809800188300,
+11900,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_eval_policy.py": [
+1789135809801188400,
+8639,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_install.py": [
+1789135809802189500,
+16089,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_lifecycle.py": [
+1789135809803189000,
+31451,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_lightpanda_fallback.py": [
+1789135809804193700,
+10116,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_origin.py": [
+1789135809804693500,
+2913,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_real_profile.py": [
+1789135809805693500,
+16067,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_session.py": [
+1789135809806194300,
+30545,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_snapshot.py": [
+1789135809806693500,
+5350,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_tool_vision.py": [
+1789135809807193900,
+7148,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_use_cli.py": [
+1789135809808193600,
+40944,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\browser_vault_tool.py": [
+1789135809808693900,
+36137,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\budget_config.py": [
+1789135809809193800,
+5629,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\checkpoint_manager.py": [
+1789135809810193800,
+57261,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\clarify_gateway.py": [
+1789135809810693600,
+14074,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\clarify_tool.py": [
+1789135809811694600,
+15373,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\close_preview_tool.py": [
+1789135809812194100,
+2571,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\close_terminal_tool.py": [
+1789135809812694000,
+2056,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\code_execution_env.py": [
+1789135809813698500,
+13384,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\code_execution_rpc.py": [
+1789135809815704600,
+8696,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\code_execution_tool.py": [
+1789135809816702900,
+47829,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\code_kernel.py": [
+1789135809817708000,
+36091,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\code_kernel_remote.py": [
+1789135809819204600,
+18303,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\computer_use_tool.py": [
+1789135809832240700,
+1104,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\connections_tool.py": [
+1789135809833739500,
+22541,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\connector_search.py": [
+1789135809834738600,
+6755,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\credential_files.py": [
+1789135809835239400,
+17458,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\cronjob_job_args.py": [
+1789135809836239400,
+20122,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\cronjob_prompt_scan.py": [
+1789135809836739600,
+7861,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\cronjob_tools.py": [
+1789135809837739100,
+54981,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\daemon_pool.py": [
+1789135809838238100,
+2533,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\debug_helpers.py": [
+1789135809838737900,
+2187,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool.py": [
+1789135809839237700,
+41602,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_child_run.py": [
+1789135809840238500,
+46599,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_config.py": [
+1789135809840738200,
+30271,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_dispatch.py": [
+1789135809841238600,
+25408,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_progress.py": [
+1789135809842239300,
+21032,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_registry.py": [
+1789135809842740100,
+15610,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_results.py": [
+1789135809843739900,
+20948,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_tasks.py": [
+1789135809844741400,
+6381,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegate_tool_toolsets.py": [
+1789135809845747500,
+5578,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegation_live_log.py": [
+1789135809847247800,
+13883,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\delegation_output_schema.py": [
+1789135809848248000,
+5232,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\desktop_ui.py": [
+1789135809849747100,
+2770,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\discord_tool.py": [
+1789135809850749500,
+31472,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\drive_preview_tool.py": [
+1789135809851246800,
+7033,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\env_passthrough.py": [
+1789135809852251600,
+6344,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\env_probe.py": [
+1789135809853256200,
+11445,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\fal_common.py": [
+1789135809877290300,
+7548,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\feishu_doc_tool.py": [
+1789135809879790200,
+3603,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\feishu_drive_tool.py": [
+1789135809880795000,
+8198,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\feishu_lark.py": [
+1789135809881798100,
+3248,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_operations.py": [
+1789135809883295900,
+77116,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_operations_common.py": [
+1789135809883795900,
+10396,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_operations_lint.py": [
+1789135809884794500,
+13701,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_operations_search.py": [
+1789135809885298100,
+49937,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_state.py": [
+1789135809886298600,
+9713,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_tools.py": [
+1789135809887303900,
+64779,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_tools_paths.py": [
+1789135809887811400,
+8884,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_tools_read_tracking.py": [
+1789135809889310900,
+11085,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\file_tools_write_guards.py": [
+1789135809891310500,
+20115,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\focus_pane_tool.py": [
+1789135809893109600,
+2631,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\fuzzy_match.py": [
+1789135809895113300,
+27644,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\homeassistant_tool.py": [
+1789135809896112600,
+14025,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\hook_output_spill.py": [
+1789135809896613200,
+4878,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\image_generation_catalog.py": [
+1789135809897613100,
+18077,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\image_generation_tool.py": [
+1789135809898613300,
+42690,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\image_source.py": [
+1789135809899112200,
+14444,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\interpreter_shutdown.py": [
+1789135809900117900,
+1225,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\interrupt.py": [
+1789135809900617000,
+4884,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\kanban_tools.py": [
+1789135809901617000,
+49584,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\kanban_tools_schemas.py": [
+1789135809903130800,
+21807,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\lazy_deps.py": [
+1789135809904635100,
+36631,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\managed_gateway_auth.py": [
+1789135809905633800,
+2896,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\managed_tool_gateway.py": [
+1789135809907134300,
+16548,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_dashboard_oauth.py": [
+1789135809908634000,
+5491,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_death_supervisor.py": [
+1789135809910633100,
+9341,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_oauth.py": [
+1789135809911134700,
+54006,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_oauth_device.py": [
+1789135809912645300,
+9489,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_oauth_manager.py": [
+1789135809913643900,
+23926,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_oauth_provider.py": [
+1789135809914146100,
+8163,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_schema_cache.py": [
+1789135809915144700,
+5175,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_agent.py": [
+1789135809917143900,
+14029,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_common.py": [
+1789135809919147700,
+5746,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_config.py": [
+1789135809920646300,
+16167,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_content.py": [
+1789135809921145000,
+11489,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_discovery.py": [
+1789135809926162400,
+26906,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_errors.py": [
+1789135810273616600,
+17337,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_handlers.py": [
+1789135810275617000,
+33872,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_health.py": [
+1789135810277116000,
+15884,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_lifecycle.py": [
+1789135810279622600,
+14378,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_loop.py": [
+1789135810280623100,
+12816,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_registration.py": [
+1789135810282123300,
+26015,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_sampling.py": [
+1789135810282623400,
+18431,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_schema.py": [
+1789135810283622900,
+11299,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_server_run.py": [
+1789135810284623800,
+24352,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\mcp_tool_transport.py": [
+1789135810285128500,
+29994,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\memory_tool.py": [
+1789135810286128500,
+20728,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\memory_tool_store.py": [
+1789135810286629800,
+23548,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\microsoft_graph_auth.py": [
+1789135810287633900,
+7438,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\microsoft_graph_client.py": [
+1789135810289461800,
+10885,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\neutts_synth.py": [
+1789135810299145200,
+3134,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\open_preview_tool.py": [
+1789135810300144800,
+3854,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\openrouter_client.py": [
+1789135810300646100,
+1587,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\osv_check.py": [
+1789135810301145600,
+10273,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\patch_parser.py": [
+1789135810302658100,
+19035,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\path_security.py": [
+1789135810304158100,
+1508,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\plugin_guard.py": [
+1789135810305156400,
+7845,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\preview_tool.py": [
+1789135810306658300,
+3535,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\process_registry.py": [
+1789135810308659300,
+117117,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\process_registry_checkpoint.py": [
+1789135810309990700,
+5726,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\process_registry_notifications.py": [
+1789135810311156200,
+19065,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\process_registry_results.py": [
+1789135810311156200,
+4300,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\project_tools.py": [
+1789135810312661900,
+6450,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\react_to_message_tool.py": [
+1789135810313161800,
+6336,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\read_extract.py": [
+1789135810314164000,
+24973,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\read_preview_tool.py": [
+1789135810314664200,
+3262,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\read_terminal_tool.py": [
+1789135810315667000,
+3275,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\read_window_tool.py": [
+1789135810316672600,
+2613,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\schema_sanitizer.py": [
+1789135810319667500,
+19583,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\self_repo_guard.py": [
+1789135810321166400,
+21197,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\send_message_senders.py": [
+1789135810322677500,
+36769,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\send_message_targets.py": [
+1789135810324176900,
+11099,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\send_message_tool.py": [
+1789135810325676000,
+39382,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\session_search_tool.py": [
+1789135810326676200,
+36518,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\setup_mcp_tool.py": [
+1789135810327677100,
+4603,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\shell_heredoc.py": [
+1789135810328677700,
+8788,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skill_ledger.py": [
+1789135810329675400,
+18664,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skill_linter.py": [
+1789135810330675100,
+11118,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skill_manager_batch.py": [
+1789135810331176200,
+9964,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skill_manager_guards.py": [
+1789135810332176100,
+15422,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skill_manager_tool.py": [
+1789135810333677600,
+45431,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skill_provenance.py": [
+1789135810335677500,
+1885,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skill_usage.py": [
+1789135810336680200,
+37010,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skillevaluator_scan.py": [
+1789135810338177600,
+7363,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_ast_audit.py": [
+1789135810338676700,
+4142,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_guard.py": [
+1789135810339676600,
+43471,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub.py": [
+1789135810340677800,
+15561,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_clawhub.py": [
+1789135810341675600,
+24472,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_github.py": [
+1789135810342176200,
+24404,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_install.py": [
+1789135810343175000,
+14728,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_models.py": [
+1789135810343676200,
+14607,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_official.py": [
+1789135810344175100,
+19336,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_search.py": [
+1789135810344675300,
+8827,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_skillssh.py": [
+1789135810345175400,
+17634,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_hub_sources.py": [
+1789135810346176600,
+20944,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_sync.py": [
+1789135810346676500,
+23396,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_sync_bundled_ops.py": [
+1789135810347176100,
+10119,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_sync_client.py": [
+1789135810348677400,
+27582,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_sync_client_org.py": [
+1789135810349677000,
+14522,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_sync_client_wire.py": [
+1789135810350677700,
+17305,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_sync_optional.py": [
+1789135810351178500,
+11390,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_tool.py": [
+1789135810352688900,
+38670,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_tool_dedup.py": [
+1789135810353188200,
+3721,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_tool_plugin.py": [
+1789135810353688900,
+8474,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\skills_tool_setup.py": [
+1789135810354689200,
+6848,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\slash_confirm.py": [
+1789135810355214800,
+4839,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\spill_safety.py": [
+1789135810355720600,
+3063,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\subagent_worktree.py": [
+1789135810356219400,
+9397,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_hints.py": [
+1789135810357219600,
+8388,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_scope.py": [
+1789135810357718500,
+7972,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool.py": [
+1789135810358719800,
+65775,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool_backends.py": [
+1789135810359220000,
+17908,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool_background.py": [
+1789135810359719800,
+13023,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool_config.py": [
+1789135810360219500,
+4896,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool_guards.py": [
+1789135810361219300,
+11522,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool_lifecycle.py": [
+1789135810362372000,
+13516,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool_result.py": [
+1789135810363370000,
+14315,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\terminal_tool_sudo.py": [
+1789135810364370000,
+21968,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\thread_context.py": [
+1789135810365369800,
+3381,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\threat_patterns.py": [
+1789135810366369300,
+9493,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tip_tool.py": [
+1789135810366869700,
+3222,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tirith_security.py": [
+1789135810367869300,
+25221,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\todo_tool.py": [
+1789135810368369900,
+13102,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tool_backend_helpers.py": [
+1789135810368870100,
+12345,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tool_output_limits.py": [
+1789135810374870700,
+2519,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tool_result_storage.py": [
+1789135810375868200,
+12113,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tool_search.py": [
+1789135810376368400,
+31592,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tool_search_catalog.py": [
+1789135810377373800,
+11709,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tool_search_validation.py": [
+1789135810378873600,
+8609,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tour_tool.py": [
+1789135810379874200,
+6578,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\transcription_audio.py": [
+1789135810381374400,
+14540,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\transcription_cloud.py": [
+1789135810382379500,
+23337,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\transcription_command.py": [
+1789135810383884200,
+14244,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\transcription_common.py": [
+1789135810384389400,
+3926,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\transcription_local.py": [
+1789135810385388400,
+13836,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\transcription_tools.py": [
+1789135810385888300,
+31333,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_command_provider.py": [
+1789135810386388400,
+15550,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_streaming.py": [
+1789135810386887900,
+14997,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_text_normalize.py": [
+1789135810387892300,
+10598,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool.py": [
+1789135810388397800,
+36953,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool_delivery.py": [
+1789135810389397400,
+21080,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool_lifecycle.py": [
+1789135810389897400,
+8070,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool_local.py": [
+1789135810390397400,
+9524,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool_openai.py": [
+1789135810390897200,
+7872,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool_plugins.py": [
+1789135810392898000,
+4576,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool_providers.py": [
+1789135810393898500,
+30749,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\tts_tool_speaker.py": [
+1789135810395400700,
+16419,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\url_safety.py": [
+1789135810396397300,
+26138,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\video_generation_tool.py": [
+1789135810396897700,
+17356,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\vision_tools.py": [
+1789135810397817300,
+52035,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\vision_tools_image_prep.py": [
+1789135810398397600,
+11330,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\voice_client_config.py": [
+1789135810398897500,
+10455,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\voice_mode.py": [
+1789135810399897600,
+72573,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\voice_mode_transcript.py": [
+1789135810400896500,
+5530,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\wake_word.py": [
+1789135810401396700,
+37289,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\wake_word_engines.py": [
+1789135810401896400,
+12022,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\web_result_cache.py": [
+1789135810410399300,
+13605,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\web_tools.py": [
+1789135810411397200,
+28374,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\web_tools_extract.py": [
+1789135810411397200,
+9530,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\web_tools_rescue.py": [
+1789135810412401900,
+5397,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\web_tools_truncate.py": [
+1789135810413406800,
+8375,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\website_policy.py": [
+1789135810413906800,
+8873,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\wisdom_notifications.py": [
+1789135810414407400,
+15017,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\wisdom_tool.py": [
+1789135810414907100,
+9557,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\working_diff.py": [
+1789135810415906300,
+4440,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\write_approval.py": [
+1789135810416314500,
+12431,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\x_search_tool.py": [
+1789135810416906800,
+15035,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\xai_http.py": [
+1789135810417408400,
+10948,
+false
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\xai_video_tools.py": [
+1789135810417906600,
+4599,
+true
+],
+"D:\\CODE\\AzurPort\\azurjuus\\.vendor\\hermes-agent\\tools\\yuanbao_tools.py": [
+1789135810418907300,
+21901,
+true
+]
+}

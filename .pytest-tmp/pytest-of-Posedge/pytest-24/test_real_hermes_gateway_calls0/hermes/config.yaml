@@ -1,0 +1,44 @@
+{
+  "model": {
+    "default": "azur-test",
+    "provider": "custom",
+    "base_url": "http://127.0.0.1:6837/v1",
+    "api_key": "${OPENAI_API_KEY}"
+  },
+  "agent": {
+    "max_turns": 80
+  },
+  "platform_toolsets": {
+    "cli": [
+      "mcp-azurjuus"
+    ]
+  },
+  "tools": {
+    "tool_search": {
+      "enabled": "off"
+    }
+  },
+  "mcp_servers": {
+    "azurjuus": {
+      "command": "D:\\CODE\\AzurPort\\azurjuus\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-X",
+        "utf8",
+        "D:\\CODE\\AzurPort\\azurjuus\\backend\\mcp_host.py"
+      ],
+      "env": {
+        "AZURJUUS_TOOL_ENDPOINT": "${AZURJUUS_TOOL_ENDPOINT}",
+        "AZURJUUS_TOOL_TOKEN": "${AZURJUUS_TOOL_TOKEN}",
+        "AZURJUUS_TOOL_ACTIONS": "${AZURJUUS_TOOL_ACTIONS}"
+      },
+      "timeout": 3600
+    }
+  },
+  "terminal": {
+    "backend": "local"
+  },
+  "memory": {
+    "memory_enabled": false,
+    "user_profile_enabled": false
+  }
+}

@@ -10,7 +10,7 @@ from backend.database import get_engine, session_scope
 from backend.idle_social import run_idle_social
 from backend.models import SocialPost
 from backend.run_store import RunStore
-from test_backend_flows import configure_test_env
+from conftest import configure_test_env
 
 
 @pytest.mark.asyncio

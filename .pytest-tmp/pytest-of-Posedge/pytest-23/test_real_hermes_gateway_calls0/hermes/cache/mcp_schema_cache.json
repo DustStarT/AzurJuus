@@ -1,0 +1,54 @@
+{
+  "azurjuus": {
+    "fingerprint": "9111c16993b87238",
+    "tools": [
+      {
+        "name": "workspace",
+        "description": "Execute authorized local work. All operations are logged. Evidence uses the OUTER callId returned by this tool, never nested IDs from execution_history.\ndiscuss: Ask or challenge an assigned teammate: actorId, text (1-2000 chars), optional kind (question/suggestion/objection/answer/resolved), threadId to continue a discussion. Maximum two exchanges per thread, 8 per task. Replies appear in group chat and tool results. To mark resolved supply threadId and explanation. Discussion is not execution evidence.\nlist_dir: List path (default .).\nread_file: Read UTF-8 text by path, offset (line, default 0), column (default 0), limit (lines, default 200), maxChars (default 20000). Continue at nextOffset/nextColumn.\nsearch: Search path recursively for literal pattern; returns paths, line numbers and text.\nwrite_file: Write UTF-8 content to path; existing files are snapshotted.\npatch_file: Replace exactly one occurrence of old with new in path; fails if ambiguous.\nmkdir: Create path within the workspace.\ncopy: Copy src file to dest; overwrite requires approval.\nmove: Move src file to dest; overwrite requires approval.\nrestore: Restore path from snapshotId; requires approval.\nundo: Undo a copy/move using its snapshotId; verifies destination has not changed and restores overwritten destination. Requires approval.\nread_document: Read PDF, DOCX or XLSX path; offset and limit page/paragraph/row units. Includes source locations.\nwrite_document: Write DOCX from content, or XLSX from sheets mapping sheet names to lists of rows.\ncommand: Run argv (array, no shell interpolation) in cwd within workspace. timeout seconds default 120. Requires task command grant.\nbrowser: Browser op: navigate(url), read, click(selector), fill(selector,value), submit(selector), download(selector,path), screenshot, tabs, select(index). Selectors are Playwright selectors. Submission/click requires approval.\ndesktop: Windows op: windows, inspect(handle), focus(handle), select(handle,index), open(handle,index), invoke(handle,index), type(handle,index,text), shortcut(handle,action: copy/cut/paste/undo/rename/select_all/up), explorer(path), screenshot, click(x,y). Element indices and shortcuts require a recent inspect. UI actions require approval.\ndeliver: Submit result: summary, artifacts [paths], checks [{callId,description}], unresolved [strings], optional notes [strings]. Read back created files. Read-only answers/listings may use artifacts=[] and successful list_dir/read calls as checks. unresolved ONLY means unmet explicit user requirements; optional further analysis and scope limitations go in notes/summary. Resolve prior failed/rejected operations using resolvedErrors [{callId,resolution,checkCallId}] with later verification, or list genuine unresolved issues.\ndelegate: Propose host-scheduled assignments: tasks [{id,actorId,brief,dependsOn:[id],acceptance:[strings]}]. Only secretary planner may use this.\nexecution_history: Read this task's durable tool journal. Supply callId for one call, or offset/limit for call metadata. Full call JSON is paginated by charOffset/maxChars; nextCharOffset locates the remainder.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "discuss",
+                "list_dir",
+                "read_file",
+                "search",
+                "write_file",
+                "patch_file",
+                "mkdir",
+                "copy",
+                "move",
+                "restore",
+                "undo",
+                "read_document",
+                "write_document",
+                "command",
+                "browser",
+                "desktop",
+                "deliver",
+                "delegate",
+                "execution_history"
+              ]
+            },
+            "args": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "args"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": false
+        }
+      }
+    ],
+    "utility_tools": [],
+    "ttl_ms": 0,
+    "written_at": 1789643221.640182,
+    "cache_scope": "private"
+  }
+}

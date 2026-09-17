@@ -31,8 +31,6 @@ def backup_cognition_migration(engine, settings):
 
 def migrate(engine):
     """Additive migrations; back up the original SQLite before changing user rows."""
-    if os.getenv("AZURJUUS_EXECUTION_BACKEND") == "legacy-test":
-        return
     with engine.connect() as conn:
         if engine.dialect.has_table(conn, "azur_schema_migrations"):
             if conn.execute(text("SELECT version FROM azur_schema_migrations WHERE version=1")).first():

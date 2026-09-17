@@ -1,0 +1,24 @@
+2026-09-17T11:11:48.573729+00:00 stage=checking
+2026-09-17T11:11:48.642216+00:00 stage=starting
+2026-09-17T11:11:48.648596+00:00 process.pid=33176
+2026-09-17T11:11:49.501395+00:00 state.db: linked SQLite 3.51.2 (interpreter D:\CODE\AzurPort\azurjuus\.venv\Scripts\python.exe) is vulnerable to the WAL-reset corruption bug (https://sqlite.org/wal.html#walresetbug) — using journal_mode=DELETE instead of enabling WAL. Upgrade to SQLite 3.51.3+ (or backports 3.50.7 / 3.44.6); Hermes-managed installs can repair the embedded runtime with `hermes update`. See `hermes doctor`. This warning fires once per process per database.
+2026-09-17T11:11:51.372327+00:00 event=gateway.ready
+2026-09-17T11:11:51.373334+00:00 gateway.ready
+2026-09-17T11:11:51.374326+00:00 stage=session
+2026-09-17T11:11:51.771046+00:00 projects.db: linked SQLite 3.51.2 (interpreter D:\CODE\AzurPort\azurjuus\.venv\Scripts\python.exe) is vulnerable to the WAL-reset corruption bug (https://sqlite.org/wal.html#walresetbug) — using journal_mode=DELETE instead of enabling WAL. Upgrade to SQLite 3.51.3+ (or backports 3.50.7 / 3.44.6); Hermes-managed installs can repair the embedded runtime with `hermes update`. See `hermes doctor`. This warning fires once per process per database.
+2026-09-17T11:11:51.831049+00:00 stage=initializing
+2026-09-17T11:11:52.390170+00:00 event=sessions.changed
+2026-09-17T11:11:56.500775+00:00 event=session.info
+2026-09-17T11:11:56.502774+00:00 event=message.start
+2026-09-17T11:11:56.502774+00:00 stage=generating
+2026-09-17T11:11:57.080946+00:00 event=session.title
+2026-09-17T11:11:57.082946+00:00 event=thinking.delta
+2026-09-17T11:11:57.687182+00:00 event=tool.generating
+2026-09-17T11:11:57.726394+00:00 event=tool.start
+2026-09-17T11:11:57.803908+00:00 event=tool.complete
+2026-09-17T11:11:58.109496+00:00 event=message.delta
+2026-09-17T11:11:58.112497+00:00 event=reasoning.available
+2026-09-17T11:11:58.152768+00:00 event=message.complete
+2026-09-17T11:11:58.153768+00:00 transport.closing
+2026-09-17T11:11:58.156775+00:00 [gateway-exit] stdin EOF (peer closed)
+2026-09-17T11:11:58.733564+00:00 transport.closed

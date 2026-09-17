@@ -8,7 +8,7 @@ from backend.app import create_app
 from backend.database import session_scope
 from backend.models import Message, ActorSkill
 from sqlalchemy import select
-from test_backend_flows import configure_test_env
+from conftest import configure_test_env
 
 
 def test_real_background_admission_handoff_review_and_idempotency(monkeypatch, tmp_path):

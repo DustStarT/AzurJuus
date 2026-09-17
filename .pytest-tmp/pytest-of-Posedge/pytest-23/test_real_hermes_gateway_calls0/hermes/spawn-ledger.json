@@ -1,0 +1,15 @@
+[
+  {
+    "pid": 37792,
+    "create_time": 1789643220.611286,
+    "purpose": "mcp-helper",
+    "install": "30a99606d27a",
+    "spawner_pid": 32828,
+    "spawner_create": 1789643217.1335404,
+    "registered_at": 1789643220.6347134,
+    "argv": "D:\\CODE\\AzurPort\\azurjuus\\.venv\\Scripts\\python.exe -X utf8 D:\\CODE\\AzurPort\\azurjuus\\backend\\mcp_host.py",
+    "host": "",
+    "port": null,
+    "profile": ""
+  }
+]

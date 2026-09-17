@@ -10,7 +10,7 @@ from backend.config import get_settings
 from backend.database import session_scope
 from backend.models import Message, SkillRun, MemoryChunk
 from backend.run_store import RunStore
-from test_backend_flows import configure_test_env
+from conftest import configure_test_env
 
 
 @pytest.mark.parametrize('submit', [True, False, 'delayed'])
