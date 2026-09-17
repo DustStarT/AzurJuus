@@ -111,7 +111,10 @@ class ExpressionService:
                 if 'segments' not in data:
                     audience = data.get('audience') or audience
                     persona, version = context(actor['id'])
-                    mind = self.c.cognition.context(actor['id'], intent, peers={a['id'] for a in run['actors']}) if self.c.cognition else ''
+                    peers = ({audience['id']} if audience and audience.get('kind') == 'peer' else
+                        {a['id'] for a in audience.get('members', [])} if audience and audience.get('kind') == 'team' else
+                        {a['id'] for a in run['actors']})
+                    mind = self.c.cognition.context(actor['id'], intent, peers=peers) if self.c.cognition else ''
                     detailed = phase == 'chat' and bool(re.search('详细|展开|代码|报告|过程|依据', intent))
                     policy = TERMINAL + '返回 JSON：{"segments":["短消息"],"sourceIds":["指定来源"]}。'
                     policy += ('用户明确请求详细内容，可以展开。' if detailed else '通常一两条气泡、合计30至120字，上限180字。简单确认可以更短。')
@@ -119,12 +122,20 @@ class ExpressionService:
                     policy += '事实包为空且历史没有依据时，不得声称自己已看过、清点过、核验过文件或参与过事件。日常致谢可以自然回应，不需要盘问用户。sourceIds 必须逐字复制本次 user 消息的 sourceId，不能填写世界条目的出处或网址。'
                     if audience and audience.get('kind') == 'peer':
                         policy += '这是同伴间正在进行的聊天，不是给指挥官的工作汇报。直接接对方刚说的具体一点；能短答就短答，通常15至80字。不复述总目标、完整方案、分工或验收标准。不必先赞同再补充再总结，不要求每次称呼。保留分歧和具体建议，不能为了简短省掉决定所需的条件。通过关注点和语气体现性格，不靠口癖、反复道歉或打比方。'
+                    elif audience and audience.get('kind') == 'team':
+                        policy += '这是包括用户和同伴的协作群。承接刚发生的具体讨论，通常一两句收尾，不作秘书致辞或审计报告。不挨个汇报每人的步骤，不虚构表扬或争执，不要求大家再次确认已经核验的事实。只有来源有待用户决定事项时才询问。技术证据在工作记录中；必要的结果、问题和交付物名称仍需说清。'
                     messages = [{'role':'system','content':policy}, {'role':'system','content':'当前角色：' + persona},
                         {'role':'system','content':'人物可见状态：' + mind},
                         {'role':'system','content':'相关背景：' + json.dumps(lore(intent, actor['name']), ensure_ascii=False)}]
                     messages.extend(run.get('history', [])[-12:])
+                    if audience and audience.get('kind') == 'team':
+                        discussions = self.c.store.get(run['id']).get('discussions', [])
+                        visible = [{'speakerId':d['senderId'], 'to':d['actorId'],
+                            'question':d.get('spokenText') or d['text'], 'reply':d.get('reply')}
+                            for d in discussions if d.get('visibility', 'team') == 'team' and d.get('status') == 'completed'][-4:]
+                        messages.append({'role':'system','content':'群内刚发生的公开讨论（观点不是新的工具事实）：' + json.dumps(visible, ensure_ascii=False)})
                     if audience:
-                        messages.append({'role':'system','content':'当前对话对象（不是用户）：' + json.dumps(audience, ensure_ascii=False)})
+                        messages.append({'role':'system','content':'当前发言场合与对话对象：' + json.dumps(audience, ensure_ascii=False)})
                     if detailed:
                         # Retrieve source-linked results only on an explicit request.
                         prior = [r for r in self.c.store.list() if r['id'] != run['id'] and

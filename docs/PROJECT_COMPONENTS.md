@@ -12,6 +12,8 @@
 | `deployment/optional/` | Docker 服务配置与可选驱动依赖 | 已从根目录移出，不参与默认桌面启动 |
 | `tests/`、`tools/`、`validation/` | 回归、安装与验收复现、证据 | 保留可复现工具，不以删除测试精简产品 |
 
-旧执行链仍被兼容测试及部分社交、技能接口引用，不能直接删除 `services.py`、`workflow_engine.py` 等大文件。本轮只清理确定失效的节点、样式、导入和部署入口混杂，并修复 `.env.example` 与 SQLite 默认模式的冲突。下一次拆除旧执行链需要逐个迁移调用者，不应以删除整个 backend 代替重构。
+2026-09-17：生产入口已统一到 RunCoordinator。本轮移除 services.py 中无调用者的 40 个旧执行、模拟和推进方法，删除旧 WorkflowEngine；历史流程图提取到只读 workflow_view.py，历史表和数据保留。社交、技能、配置、消息等仍使用服务层，不能删除整个 backend。失效的旧流程定时器环境变量也已移除，用户实际 .env 不改动。
+
+阅读当前实现建议按 [技术报告](TECHNICAL_REPORT.md) → [代码讲解](CODE_WALKTHROUGH.md)；[面试讲解](INTERVIEW_GUIDE.md) 用于组织表达。日期命名文档保留当日证据，不作为当前调用链的唯一依据。
 
 用户自定义角色与数据库生效版本独立于材料文件。协作自然度改动不自动覆盖用户的人设，也不改写历史消息。

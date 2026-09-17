@@ -38,11 +38,32 @@ def main():
             page.reload();page.get_by_label('消息输入').wait_for()
             assert page.get_by_role('button',name='立即显示').count()==0
             report['checks'].append('Historical replies do not replay')
+            alignment=page.request.post(base+'/__acceptance/alignment').json()
+            page.locator('.conversation-card').filter(has_text=alignment['conversationTitle']).click()
+            for mid in alignment['messageIds']:
+                page.locator(f'[data-message-id="{mid}"] .message-bubble').wait_for()
             for width,height in [(1280,720),(1600,900),(1920,1080)]:
                 page.set_viewport_size({'width':width,'height':height})
                 page.wait_for_timeout(250)
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-                page.screenshot(path=str(out/f'group-{width}.png'))
+                positions=page.evaluate('''ids=>ids.map(id=>{
+                    const row=document.querySelector('[data-message-id="'+id+'"]');
+                    const bubble=row.querySelector('.message-bubble').getBoundingClientRect();
+                    const avatar=row.querySelector('.avatar').getBoundingClientRect();
+                    const stack=row.querySelector('.speech-stack');
+                    const box=row.getBoundingClientRect();
+                    return {left:bubble.left,right:bubble.right,avatarLeft:avatar.left,avatarRight:avatar.right,
+                      rowLeft:box.left,rowRight:box.right,align:getComputedStyle(stack).alignItems};
+                })''',alignment['messageIds'])
+                short,agent,long=positions
+                assert short['align']==long['align']=='flex-end',positions
+                assert abs(short['right']-long['right'])<2,positions
+                assert short['avatarLeft']>short['right'] and long['avatarLeft']>long['right'],positions
+                assert agent['left']>agent['avatarRight'] and agent['left']<short['left'],positions
+                assert abs(short['avatarRight']-short['rowRight'])<2,positions
+                assert abs(agent['avatarLeft']-agent['rowLeft'])<2,positions
+                page.screenshot(path=str(out/f'alignment-{width}.png'))
+            report['checks'].append('Short and wrapped user bubbles share the right edge; agent avatar and bubbles remain on the left at all three widths')
             dm=next(c for c in boot['conversations'] if c['kind']=='dm')
             page.locator('.conversation-card').filter(has_text=dm['title']).click()
             page.screenshot(path=str(out/'private.png'))

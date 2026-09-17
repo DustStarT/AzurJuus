@@ -87,6 +87,55 @@ def test_expression_failure_does_not_retract_work(world):
     assert any(e['type']=='expression.failed' for e in c.store.events())
 
 
+def test_team_final_is_addressed_to_actual_participants(world):
+    c, _, (aid,bid,*_) = world
+    run, actor = fixture_run(c, aid)
+    run=c.store.update(run['id'], mode='task', collaborative=True, status='completed',
+        actors=[actor,{'id':bid,'name':'未参与者'}], assignments=[], discussions=[
+            {'senderId':aid,'actorId':aid,'status':'completed','visibility':'team','text':'原始建议','spokenText':'公开建议','reply':'公开答复'},
+            {'senderId':bid,'actorId':bid,'status':'completed','visibility':'private','text':'私人判断','reply':'私人答复'},
+        ])
+    requests=[]
+    async def generate(messages,settings):
+        requests.append(messages)
+        return {'segments':['好了，这份清单可以用了。'], 'sourceIds':[run['id']+':result']}
+    c.expression.enabled=True
+    c.expression.generate=generate
+    asyncio.run(c.finish_callback(run['id'],'清单已经核验。'))
+    payload=json.loads(requests[0][-1]['content'])
+    assert payload['address']=='当前协作群'
+    audience=next(m['content'] for m in requests[0] if m['content'].startswith('当前发言场合'))
+    assert actor['name'] in audience and '未参与者' not in audience
+    prompt=json.dumps(requests[0],ensure_ascii=False)
+    assert '公开建议' in prompt and '公开答复' in prompt
+    assert '私人判断' not in prompt and '私人答复' not in prompt
+    assert c.store.get(run['id'])['resultMessageId'].startswith('speech-')
+
+
+def test_hermes_execution_text_never_enters_chat_when_expression_enabled(world):
+    c, _, (aid,*_) = world
+    run,actor=fixture_run(c,aid)
+    run=c.store.update(run['id'],mode='task',workspace=str(c.store.path.parent))
+    published=[]
+    class Bridge:
+        def __init__(self,*args): self.emit=args[-1]
+        async def start(self): pass
+        async def prompt(self,*args,**kwargs):
+            await self.emit('message.complete',{'text':'仅供工作记录的原始核验报告'})
+            c.store.update(run['id'],reviewResult={'summary':'已核验'})
+            return '已核验'
+        async def close(self): pass
+    async def publish(*args): published.append(args)
+    c.expression.enabled=True
+    c.bridge_factory=Bridge
+    c.message_callback=publish
+    asyncio.run(c.execute_actor(run,actor,'reviewer','检查结果',c.settings_loader()))
+    assert not published
+    events=c.store.events()
+    assert any(e['type']=='execution.message.complete' for e in events)
+    assert not any(e['type']=='message.complete' for e in events)
+
+
 def test_invalid_json_gets_one_repair(world):
     c, _, (aid,*_) = world
     run, actor = fixture_run(c, aid)

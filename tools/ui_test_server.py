@@ -21,6 +21,25 @@ from server import create_server, serve
 
 def build_server(port=8879):
     server = create_server(host="127.0.0.1", port=port)
+    @server.app.post('/__acceptance/alignment')
+    async def alignment_fixture():
+        from backend.database import session_scope
+        from backend.models import Conversation
+        from uuid import uuid4
+        with session_scope() as session:
+            service=server.app.state.service
+            snapshot=service.build_snapshot(session)
+            conversation=next(v for v in snapshot['conversations'] if v['kind']=='dm')
+            actor=next(a for a in snapshot['agents'] if a['id'] in conversation['memberIds'])
+            row=session.get(Conversation,conversation['id'])
+            ids=[]
+            for speaker,text in [(snapshot['user']['id'],'好。'),(actor['id'],'我在，继续说吧。'),
+                (snapshot['user']['id'],'这是用于验证长消息换行位置的合成文本。'*18)]:
+                mid='alignment-'+uuid4().hex
+                service._append_message(session,row,speaker,'text',text,message_id=mid)
+                ids.append(mid)
+        server.app.state.runs.store.event(None,'workspace.changed',{})
+        return {'conversationTitle':conversation['title'],'messageIds':ids}
     @server.app.post('/__acceptance/terminal')
     async def terminal_fixture():
         import json

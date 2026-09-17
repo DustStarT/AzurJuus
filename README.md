@@ -18,6 +18,8 @@
 
 ## 一句话
 
+当前实现说明：先读 [技术报告](docs/TECHNICAL_REPORT.md)，再读 [代码调用链](docs/CODE_WALKTHROUGH.md)；面试准备见 [项目讲解](docs/INTERVIEW_GUIDE.md)，目录与 Docker 取舍见 [项目组成](docs/PROJECT_COMPONENTS.md)。
+
 2026-09-16：新增人物经历、关系与技能试用机制，使用及技术细节见 [人物认知与成长说明](docs/COGNITION_GUIDE.md)。人格自然度的人工对照尚未验收，不能用功能测试替代。
 
 你对着港区说：「把这三份资料汇总成一份报告。」
@@ -351,7 +353,7 @@ npm run build
 | `tools/personality_benchmark.py` | 角色表达基准 |
 | `tools/doctor.py` | 环境自检：Python、SQLite、模块、Hermes 提交是否匹配、UI 是否已构建 |
 
-**当前本机实测：后端 83 项回归通过；前端类型检查与构建通过。** 这是一次测试运行的结果，不是覆盖率、真实任务成功率或性能 SLA。
+测试数量与本轮验证范围见 [当前修复记录](docs/UI_COLLAB_CLEANUP_20260917.md)。测试运行结果不是覆盖率、真实任务成功率或性能 SLA。
 
 ---
 
@@ -366,10 +368,10 @@ npm run build
 5. **独立审查不是两个独立专家。** 审查者通常还是同一个基础模型，可能存在相关性错误。
 6. **桌面自动化有明确死角。** 没有 Office / WPS GUI 自动化，没有任意专业软件承诺，扫描版 PDF 只标记不做 OCR。
 7. **性能数据有范围。** 某测试环境下 720 帧测量中位数约 16.7ms、p95 约 16.8ms —— 只说明那个场景接近 60fps，不代表所有 GPU / DPI / 长时间会话。
-8. **成长能力尚未闭环。** 协作学习只生成默认禁用的私有候选，独立试用、效果比较与成熟晋升还没做。
-9. **历史包袱还在。** 旧的执行链保留在显式 `legacy-test` 兼容路径中（生产旧接口返回 409），所以「文件里有这段代码」和「桌面现在会执行它」必须区分。
+8. **成长范围有限。** 已实现个人候选、隔离试用、基线比较、启用与回退；只对有可靠验收器的任务族自动晋升，不是通用自我训练。
+9. **历史结构仍保留。** 旧执行循环已清理，历史流程表及只读展示继续保留，避免损伤用户记录；新任务统一由 RunCoordinator 调度。
 
-完整的实现状态、未覆盖范围与修复记录见 [实施与验收记录](docs/IMPLEMENTATION.md)，最新的能力边界见 [人物表达与协作更新](docs/PERSONALITY_COLLABORATION_20260914.md)。
+当前实现和限制见 [技术报告](docs/TECHNICAL_REPORT.md)，各日期实施记录作为历史证据保留。
 
 ---
 
@@ -382,7 +384,7 @@ npm run build
 | [实施与验收记录](docs/IMPLEMENTATION.md) | 各阶段实现状态、已修复问题、未覆盖边界 |
 | [人物认知、关系与方法成长](docs/COGNITION_GUIDE.md) | 认知状态、记忆检索与技能成长怎么落地 |
 | [JUUS 界面规范](docs/UI.md) | 布局、视觉、动画与产物说明 |
-| [人物表达与协作更新](docs/PERSONALITY_COLLABORATION_20260914.md) | 最新一轮的能力与限制 |
+| [人物表达与协作更新](docs/PERSONALITY_COLLABORATION_20260914.md) | 9 月 14 日的历史实现记录 |
 | [DeepSeek 实际验收](docs/DEEPSEEK.md) | 真实云端模型的验收记录与复现命令 |
 | [桌面无回复与退出阻塞调查](docs/DESKTOP_FIX_20260913.md) | 相对路径导致配置丢失的完整排查 |
 | [原始计划对照](docs/PLAN_AUDIT_20260913.md) | 计划项与本轮修复的对照 |

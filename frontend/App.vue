@@ -36,6 +36,7 @@ const scroller = ref<HTMLElement>(),
   atBottom = ref(true),
   mobileChat = ref(false);
 const data = computed(() => workspace.value?.data);
+const userId = computed(() => data.value?.user.id || 'commander');
 const agents = computed(() => data.value?.agents || []);
 const agentMap = computed(() =>
   Object.fromEntries(
@@ -606,7 +607,7 @@ onUnmounted(() => {
                   :key="m.id"
                   :data-message-id="m.id"
                   class="message-row"
-                  :class="{ 'message-row--self': m.speakerId === 'commander' }"
+                  :class="{ 'message-row--self': m.speakerId === userId }"
                 >
                   <button v-if="m.type === 'task_notice'" class="soft-button" @click="openRun(runs.find(r => r.id === m.metadata?.runId))">{{ m.body }}</button>
                   <Avatar v-else :agent="agentMap[m.speakerId]" />
@@ -618,7 +619,7 @@ onUnmounted(() => {
                       ><time>{{ time(m.createdAt) }}</time>
                     </div>
                     <details v-if="m.type === 'task_progress' && !m.metadata?.expression"><summary>历史工作回复</summary><div class="message-bubble">{{ m.body }}</div></details>
-                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :single="m.speakerId === 'commander'" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
+                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
                   </div>
                 </article>
                 <div

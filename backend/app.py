@@ -24,7 +24,6 @@ from .skill_runtime import SkillRuntime
 from .social_runtime import SocialRuntime
 from .services import AzurJuusService, ServiceBundle
 from .tool_gateway import ToolGateway
-from .workflow_engine import WorkflowEngine
 from .run_api import install_run_api
 from .idle_social import SocialPreempted
 
@@ -41,7 +40,6 @@ def _build_runtime_services(runtime_context: dict[str, Any] | None = None):
             memory=memory,
             tools=ToolGateway(settings.default_workspace_root),
             social=SocialRuntime(enabled=settings.social_enabled),
-            workflow=WorkflowEngine(),
             skills=SkillRuntime(),
             runtime_context=runtime_context if runtime_context is not None else {},
         )
