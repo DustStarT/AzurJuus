@@ -7,7 +7,7 @@ import pytest
 
 from backend.hermes_bridge import HermesBridge
 from backend.realtime import RealtimeHub
-from test_backend_flows import configure_test_env
+from conftest import configure_test_env
 
 
 def test_server_shutdown_cancels_pending_http_approval(monkeypatch, tmp_path):

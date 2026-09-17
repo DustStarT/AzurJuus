@@ -13,6 +13,7 @@ const calls = ref<ToolCall[]>([]),
   tab = ref("progress"),
   busy = ref(false);
 const outputs = ref<Record<string, string>>({});
+const transcripts = ref<{seq:number;actorId:string;text:string}[]>([]);
 const statuses: Record<string, string> = {
   queued: "排队中",
   running: "正在执行",
@@ -40,6 +41,7 @@ async function load() {
       calls.value = (
         await api<{ calls: ToolCall[] }>(`/api/runs/${props.run.id}`)
       ).calls;
+      transcripts.value = (await api<{records:typeof transcripts.value}>(`/api/runs/${props.run.id}/transcripts`)).records;
     } catch (e) {
       error.value = (e as Error).message;
     }
@@ -170,6 +172,7 @@ async function removeRecords(all = false) {
           <p v-if="run.error" class="error-message">
             <Icon name="alert" />{{ run.error }}
           </p>
+          <p v-if="run.expressionError" class="error-message">{{ run.expressionError }}。执行状态和产物不受影响。</p>
           <div class="run-controls">
             <button v-if="['completed', 'failed', 'cancelled', 'paused'].includes(run.status)" class="text-button danger" :disabled="busy" @click="removeRecords()">删除记录</button>
             <button
@@ -295,6 +298,12 @@ async function removeRecords(all = false) {
               <p>{{ run.result.summary }}</p>
             </div></template
           >
+          <div v-if="tab === 'tools' && transcripts.length">
+            <details v-for="record in transcripts" :key="record.seq" class="tool-record">
+              <summary>{{ agents.find(a => a.id === record.actorId)?.name || '成员' }} · 工作原文</summary>
+              <pre>{{ record.text }}</pre>
+            </details>
+          </div>
           <template v-if="tab === 'tools'"
             ><div v-if="!calls.length" class="quiet-note">
               工具执行后会在这里留下真实记录。

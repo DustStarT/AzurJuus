@@ -4,8 +4,10 @@ import { api, useWorkspace } from "./api";
 import type { Agent, Conversation, Post, Run } from "./types";
 import Icon from "./Icon.vue";
 import Avatar from "./Avatar.vue";
+import { artworkUrl } from './assets';
 import WorkDrawer from "./WorkDrawer.vue";
 import SpeechBubbles from "./SpeechBubbles.vue";
+import { liveSpeechIds } from './speechQueue';
 import MethodPanel from "./MethodPanel.vue";
 import SettingsPanel from "./SettingsPanel.vue";
 const { workspace, runs, online, error, streams, refresh, start, stop } =
@@ -34,6 +36,7 @@ const scroller = ref<HTMLElement>(),
   atBottom = ref(true),
   mobileChat = ref(false);
 const data = computed(() => workspace.value?.data);
+const userId = computed(() => data.value?.user.id || 'commander');
 const agents = computed(() => data.value?.agents || []);
 const agentMap = computed(() =>
   Object.fromEntries(
@@ -64,6 +67,8 @@ const peer = computed(() =>
     .map((id) => agentMap.value[id])
     .find((a) => a && a.id !== "commander"),
 );
+const backdropFailed = ref(false);
+watch(() => peer.value?.illustrationUrl, () => { backdropFailed.value = false; });
 const messages = computed(() => data.value?.messages[activeId.value] || []);
 const visibleMessages = computed(() => {
   const rows = messages.value.slice(-pageSize.value).map(m => {
@@ -154,6 +159,7 @@ async function removeGroup() {
   } catch (e) { notice.value = (e as Error).message; }
 }
 async function selectConversation(c: Conversation) {
+  liveSpeechIds.clear();
   activeId.value = c.id;
   mobileChat.value = true;
   pageSize.value = 100;
@@ -381,8 +387,7 @@ onUnmounted(() => {
   <div class="juus-shell" :class="{ 'is-mobile-chat': mobileChat }">
     <aside class="rail">
       <a class="brand" href="#" @click.prevent="switchView('chat')"
-        ><span class="brand-mark">♟</span>JUUS<span>//</span></a
-      ><span class="rail-caption">PORT CONNECTION</span>
+        aria-label="JUUS 首页">JUUS<span>//</span></a>
       <nav class="rail-nav" aria-label="主导航">
         <button
           :class="{ active: view === 'chat' }"
@@ -420,9 +425,7 @@ onUnmounted(() => {
     <main class="workspace">
       <header class="topbar">
         <span class="wordmark">JUUSTAGRAM</span
-        ><span class="topbar-sub">{{
-          view === "chat" ? "与你的港区，保持连接" : "记录港区的每一个日常"
-        }}</span>
+        >
         <div class="topbar-status">
           <span class="status-dot" :class="{ connected: online }"></span
           >{{ online ? "本地已连接" : "重新连接中"
@@ -522,12 +525,6 @@ onUnmounted(() => {
                 <p>没有找到相关会话</p>
               </div>
             </div>
-            <footer class="list-footer">
-              <span class="small-dot"></span
-              >{{ agents.length }} 位伙伴已连接<span class="list-footer-mark"
-                >AZUR LANE</span
-              >
-            </footer>
           </aside>
           <section class="chat-panel" v-if="conversation">
             <header class="chat-header">
@@ -578,13 +575,11 @@ onUnmounted(() => {
               <img
                 v-if="conversation.kind !== 'group' && peer?.illustrationUrl"
                 class="character-backdrop"
-                :src="peer.illustrationUrl"
+                :src="backdropFailed ? peer.illustrationUrl : artworkUrl(peer.illustrationUrl)"
+                decoding="async"
+                @error="backdropFailed = true"
                 alt=""
               />
-              <div class="scene-watermark" aria-hidden="true">
-                <span>♧</span><strong>JUUSTAGRAM</strong
-                ><small>THE PORT IS ALWAYS HERE.</small>
-              </div>
               <div
                 class="message-scroll"
                 ref="scroller"
@@ -612,7 +607,7 @@ onUnmounted(() => {
                   :key="m.id"
                   :data-message-id="m.id"
                   class="message-row"
-                  :class="{ 'message-row--self': m.speakerId === 'commander' }"
+                  :class="{ 'message-row--self': m.speakerId === userId }"
                 >
                   <button v-if="m.type === 'task_notice'" class="soft-button" @click="openRun(runs.find(r => r.id === m.metadata?.runId))">{{ m.body }}</button>
                   <Avatar v-else :agent="agentMap[m.speakerId]" />
@@ -624,7 +619,7 @@ onUnmounted(() => {
                       ><time>{{ time(m.createdAt) }}</time>
                     </div>
                     <details v-if="m.type === 'task_progress' && !m.metadata?.expression"><summary>历史工作回复</summary><div class="message-bubble">{{ m.body }}</div></details>
-                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :single="m.speakerId === 'commander'" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
+                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
                   </div>
                 </article>
                 <div
@@ -724,11 +719,7 @@ onUnmounted(() => {
                   @click="mode = item.id"
                 >
                   <Icon :name="item.icon" :size="15" />{{ item.text }}</button
-                ><span class="composer-hint">{{
-                  mode === "chat"
-                    ? "一些日常，也值得分享"
-                    : "说出目标，让伙伴们完成实际工作"
-                }}</span>
+                >
               </div>
               <div class="composer-input">
                 <textarea

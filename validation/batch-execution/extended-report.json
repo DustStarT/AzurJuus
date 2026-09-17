@@ -1,0 +1,42 @@
+{
+  "status": "passed",
+  "stateDirectory": "D:\\CODE\\AzurPort\\azurjuus\\.azurjuus\\batch-execution\\6f464c9351cb427396b7b59d9c24c245",
+  "checks": [
+    "bat > desktop.py > QWebEngine > expression > configured model chat completed",
+    "bat task produced and verified report.txt",
+    "Exact directory-listing query completed with read-only evidence and no mandatory file artifact",
+    "Live peer discussion and persona-isolated private task notice",
+    "Collaboration: dedicated group, two distinct workers, dependency handoff, two real verified files, member replies and origin summary",
+    "relative state path resolved before child cwd; Hermes state/config share the intended directory",
+    "active run saved as paused; launcher and child processes exited without traceback"
+  ],
+  "entry": "launch_azurjuus.bat",
+  "relativeStatePath": ".azurjuus/batch-execution/6f464c9351cb427396b7b59d9c24c245/state/workspace.json",
+  "listingRunId": "run-4f565a5becb64b9ba2a344f7950ade1f",
+  "collaborationRunId": "run-828755a5449a41acb47905793ad812bb",
+  "collaborationAssignments": [
+    {
+      "id": "facts",
+      "actorId": "juus-能代",
+      "dependsOn": []
+    },
+    {
+      "id": "team-report",
+      "actorId": "juus-信浓",
+      "dependsOn": [
+        "facts"
+      ]
+    },
+    {
+      "id": "secretary-verify",
+      "actorId": "juus-信浓",
+      "dependsOn": [
+        "facts",
+        "team-report"
+      ]
+    }
+  ],
+  "shutdownSeconds": 0.641,
+  "exitCode": 0,
+  "remainingChildPids": []
+}

@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 from backend.credentials import reveal
 from backend.personality import expression_rules
 from backend.character_behavior import BEHAVIORS, behavior_context
+from backend.terminal_characters import TERMINAL, card, render, VERSION
 
 SCENES = [
     ('辨识', '今天没有任务，想和你随便聊两句。'),
@@ -66,6 +67,7 @@ async def main(args):
     names = list(BEHAVIORS)
     seeds = {name: json.loads((ROOT / f'resources/characters/{name}.json').read_text(encoding='utf-8'))['prompt_seed'] for name in names}
     manifest = {'model':model, 'temperature':.5, 'maxTokens':600, 'repetitions':args.repeat,
+        'terminalCardVersion':VERSION,
         'scenes':[{'id':i+1,'category':c,'prompt':p} for i,(c,p) in enumerate(SCENES)],
         'anchorHashes':{n:hashlib.sha256(p.encode()).hexdigest() for n,p in seeds.items()},
         'baselineNote':'提示层重建基线，不冒充本轮修改前已采集的生产输出。',
@@ -98,6 +100,7 @@ async def main(args):
             if variant in {'memory','full'}:
                 system += '\n合成个人观察：你在上次合作中答应提交前提醒检查附件；你观察到同伴随后补齐了附件。没有看到任何私下口令。'
             if variant == 'full':
+                system = TERMINAL + '\n' + render(card(name)) + '\n合成个人观察：你答应提交前提醒检查附件；同伴随后补齐了附件。没有看到任何私下口令。'
                 system += '\n合成关系判断：你认可这位同伴愿意改正问题；一次遗漏不足以判断其总体能力。可以减少重复解释，但附件是否检查仍需要确认。私人判断不等于客观事实。'
             record = {'key':token,'scene':index+1,'repeat':repeat,'variant':variant,'actor':name}
             try:
@@ -113,7 +116,7 @@ async def main(args):
         if not args.resume:
             path.write_text('',encoding='utf-8')
         await asyncio.gather(*(case(i,r,v) for i in range(24) for r in range(args.repeat) for v in ('baseline','prompt','memory','full')))
-        history = [{'role':'system','content':seeds[names[0]]+'\n'+expression_rules('chat')+'\n你曾承诺在第30次交流前提醒检查附件。只知道自己看到的事情。'}]
+        history = [{'role':'system','content':TERMINAL+'\n'+render(card(names[0]))+'\n你曾承诺在第30次交流前提醒检查附件。只知道自己看到的事情。'}]
         continuity = []
         for index in range(30):
             prompt = '现在准备提交，之前有什么约定？' if index == 29 else SCENES[index%24][1]

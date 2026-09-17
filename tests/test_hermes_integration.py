@@ -76,7 +76,9 @@ async def test_real_hermes_gateway_calls_only_host_mcp(tmp_path, monkeypatch):
     events = []
     async def event(kind, payload):
         events.append((kind,payload))
-    monkeypatch.setenv("AZURJUUS_HERMES_SOURCE", ".vendor/hermes-agent")
+    monkeypatch.setenv("AZURJUUS_HERMES_SOURCE", str(ROOT / ".vendor/hermes-agent"))
+    # Exercise a relative home even when Windows temp and checkout use different drives.
+    monkeypatch.chdir(tmp_path.parent)
     relative_home = Path(os.path.relpath(tmp_path / "hermes", Path.cwd()))
     assert not relative_home.is_absolute()
     bridge = HermesBridge(relative_home, {"llmModel":"azur-test", "llmBaseUrl":base + "/v1", "llmApiKey":"local-test-only"}, base + "/tool", "host-test-token", event)

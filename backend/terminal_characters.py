@@ -1,8 +1,6 @@
 """Versioned, terminal-specific interpretations; no simulated physical presence."""
 import difflib
-import hashlib
 from urllib.parse import quote
-from sqlalchemy import select
 from .database import session_scope
 from .models import Actor
 

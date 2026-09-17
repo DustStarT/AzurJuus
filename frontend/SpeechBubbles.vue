@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { enqueueSpeech, liveSpeechIds } from './speechQueue';
-const props = defineProps<{ text: string; streaming?: boolean; single?: boolean; messageId?:string; conversationId?:string }>();
+const props = defineProps<{ text: string; streaming?: boolean; single?: boolean; self?: boolean; messageId?:string; conversationId?:string }>();
 const emit = defineEmits<{ reveal: [] }>();
 // History is immediate; live output commits complete sentences without final flush.
-const queued = !!props.messageId && liveSpeechIds.delete(props.messageId);
+const fresh = !!props.messageId && liveSpeechIds.delete(props.messageId);
+const queued = fresh && props.text.length <= 180 && !props.single;
 const live = ref(!!props.streaming || queued);
 let release: (()=>void) | undefined;
 let waiting = queued;
@@ -63,7 +64,7 @@ const bubbles = computed(() => {
 onBeforeUnmount(() => { clearTimeout(timer); release?.(); });
 </script>
 <template>
-  <div class="speech-stack" :aria-busy="streaming || shown.length < readyParts.length || undefined">
+  <div class="speech-stack" :class="{ 'speech-stack--self': self }" :aria-busy="streaming || shown.length < readyParts.length || undefined">
     <div v-for="bubble in bubbles" :key="bubble.id" class="message-bubble" :class="{ 'speech-enter': live }">
       <span v-for="part in bubble.parts" :key="part.id" :class="{ 'sentence-enter': live }">{{ part.text }}</span>
     </div>
@@ -73,7 +74,8 @@ onBeforeUnmount(() => { clearTimeout(timer); release?.(); });
 </template>
 <style scoped>
 .speech-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
-.speech-stack .message-bubble { max-width: 100%; overflow-wrap: anywhere; }
+.speech-stack .message-bubble { max-width: min(100%, 36em); overflow-wrap: anywhere; }
+.speech-stack--self { align-items: flex-end; }
 .speech-enter { animation: speech-in 180ms ease-out both; transform-origin: left bottom; }
 .sentence-enter { animation: sentence-in 180ms ease-out both; }
 .speech-wait { padding: 8px 16px; color: #7199aa; }

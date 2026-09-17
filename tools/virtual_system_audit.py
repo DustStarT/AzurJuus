@@ -40,8 +40,6 @@ def configure_isolated_env(base_dir: Path) -> Path:
     os.environ["AZURJUUS_WORKSPACE_STATE_PATH"] = str(base_dir / "workspace-state.json")
     os.environ["AZURJUUS_SOCIAL_ENABLED"] = "0"
     os.environ["AZURJUUS_SOCIAL_TICK_SECONDS"] = "9999"
-    os.environ["AZURJUUS_WORKFLOW_RUNTIME_ENABLED"] = "0"
-    os.environ["AZURJUUS_WORKFLOW_TICK_SECONDS"] = "9999"
     get_settings.cache_clear()
     return workspace_root
 

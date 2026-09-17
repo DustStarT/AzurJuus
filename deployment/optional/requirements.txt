@@ -1,4 +1,5 @@
 # Optional server deployments; not required by the desktop app.
+# Install only when using the optional server adapters.
 psycopg[binary]>=3.2,<4
 redis>=5,<6
 chromadb>=0.5,<1

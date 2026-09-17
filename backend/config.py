@@ -33,8 +33,6 @@ class Settings:
     llm_timeout_seconds: float
     social_enabled: bool
     social_tick_seconds: float
-    workflow_runtime_enabled: bool
-    workflow_tick_seconds: float
 
 
 def _getenv_bool(key: str, default: bool) -> bool:
@@ -69,6 +67,4 @@ def get_settings() -> Settings:
         llm_timeout_seconds=float(os.getenv("AZURJUUS_LLM_TIMEOUT", "45")),
         social_enabled=_getenv_bool("AZURJUUS_SOCIAL_ENABLED", True),
         social_tick_seconds=float(os.getenv("AZURJUUS_SOCIAL_TICK_SECONDS", "20")),
-        workflow_runtime_enabled=_getenv_bool("AZURJUUS_WORKFLOW_RUNTIME_ENABLED", True),
-        workflow_tick_seconds=float(os.getenv("AZURJUUS_WORKFLOW_TICK_SECONDS", "12")),
     )

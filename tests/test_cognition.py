@@ -11,7 +11,7 @@ from backend.config import get_settings
 from backend.database import session_scope
 from backend.models import Actor, ActorSkill
 from backend.cognition_models import MindCursor, Experience
-from test_backend_flows import configure_test_env
+from conftest import configure_test_env
 
 
 @pytest.fixture

@@ -62,9 +62,20 @@ def install_run_api(app, service, settings):
         run = store.get(run_id)
         expressed = coordinator.expression and coordinator.expression.enabled
         if expressed and run['mode'] != 'chat':
-            await coordinator.expression.speak(run, run['actors'][0], 'result', '告诉用户任务的结果，只说必要结论。',
-                facts={'status':run['status'], 'summary':text, 'artifacts':[a.get('path') if isinstance(a,dict) else a for a in run.get('artifacts', [])]})
+            audience = None
+            intent = '告诉用户任务的结果，只说必要结论。'
+            if run.get('collaborative'):
+                participant_ids = {run['actorId'], *(a['actorId'] for a in run['assignments'])}
+                audience = {'kind':'team', 'name':'当前协作群', 'includesUser':True,
+                    'members':[{'id':a['id'],'name':a['name']} for a in run['actors'] if a['id'] in participant_ids]}
+                intent = '在当前协作群收尾，承接成员刚完成的工作，说清结果或仍需决定的一件事。'
+            await coordinator.expression.speak(run, run['actors'][0], 'result', intent,
+                facts={'status':run['status'], 'summary':text, 'artifacts':[a.get('path') if isinstance(a,dict) else a for a in run.get('artifacts', [])]},
+                audience=audience)
         message_id = run_id + "-result"
+        if expressed:
+            phase = 'chat' if run['mode'] == 'chat' else 'result'
+            message_id = 'speech-' + hashlib.sha256((run_id + ':' + phase).encode()).hexdigest()[:24]
         with session_scope() as session:
             conversation = session.get(Conversation, run["conversationId"])
             if not expressed and conversation and session.get(Message, message_id) is None:
@@ -145,6 +156,7 @@ def install_run_api(app, service, settings):
     from .expression import ExpressionService
     from .terminal_api import install_terminal_api
     coordinator.expression = ExpressionService(coordinator)
+    service.expression = coordinator.expression
     install_terminal_api(app, coordinator)
     from .skill_growth import SkillGrowth
     coordinator.growth = SkillGrowth(coordinator, service)

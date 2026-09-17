@@ -21,6 +21,52 @@ from server import create_server, serve
 
 def build_server(port=8879):
     server = create_server(host="127.0.0.1", port=port)
+    @server.app.post('/__acceptance/alignment')
+    async def alignment_fixture():
+        from backend.database import session_scope
+        from backend.models import Conversation
+        from uuid import uuid4
+        with session_scope() as session:
+            service=server.app.state.service
+            snapshot=service.build_snapshot(session)
+            conversation=next(v for v in snapshot['conversations'] if v['kind']=='dm')
+            actor=next(a for a in snapshot['agents'] if a['id'] in conversation['memberIds'])
+            row=session.get(Conversation,conversation['id'])
+            ids=[]
+            for speaker,text in [(snapshot['user']['id'],'好。'),(actor['id'],'我在，继续说吧。'),
+                (snapshot['user']['id'],'这是用于验证长消息换行位置的合成文本。'*18)]:
+                mid='alignment-'+uuid4().hex
+                service._append_message(session,row,speaker,'text',text,message_id=mid)
+                ids.append(mid)
+        server.app.state.runs.store.event(None,'workspace.changed',{})
+        return {'conversationTitle':conversation['title'],'messageIds':ids}
+    @server.app.post('/__acceptance/terminal')
+    async def terminal_fixture():
+        import json
+        from uuid import uuid4
+        from backend.database import session_scope
+        c = server.app.state.runs
+        with session_scope() as session:
+            snapshot = server.app.state.service.build_snapshot(session)
+        conversation = next(v for v in snapshot['conversations'] if v['kind']=='group')
+        actors = snapshot['agents'][:2]
+        run,_=c.store.create({'prompt':'合成短消息验收','actors':actors,'actorId':actors[0]['id'],
+            'conversationId':conversation['id'],'mode':'task','collaborative':True,'history':[]},uuid4().hex)
+        generator = c.expression.generate
+        async def fake(messages, settings):
+            source = json.loads(messages[-1]['content'])['sourceId']
+            return {'segments':['我看过了，这份清单没有遗漏。','你再看看分类是否合适。'], 'sourceIds':[source]}
+        c.expression.generate = fake
+        ids=[]
+        try:
+            for i,actor in enumerate(actors):
+                await c.expression.speak(run,actor,'discussion_'+str(i),'向同伴说明核验结果',{'summary':'清单没有遗漏，请对方确认分类。'})
+            with c.store.connect() as db:
+                ids=[r[0] for r in db.execute('SELECT id FROM speeches WHERE run_id=? ORDER BY rowid',(run['id'],))]
+            c.store.update(run['id'],status='completed')
+        finally:
+            c.expression.generate=generator
+        return {'conversationTitle':conversation['title'],'messageIds':ids}
     @server.app.post('/__acceptance/mind')
     async def mind_fixture(payload: dict):
         c = server.app.state.runs

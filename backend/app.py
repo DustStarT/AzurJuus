@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .constants import API_ROUTES, DEFAULT_USER, REALTIME_EVENTS
+from .constants import DEFAULT_USER
 from .database import initialize_database, session_scope
 from .llm_runtime import AgentRuntime
 from .memory import MemoryStore
@@ -24,8 +24,8 @@ from .skill_runtime import SkillRuntime
 from .social_runtime import SocialRuntime
 from .services import AzurJuusService, ServiceBundle
 from .tool_gateway import ToolGateway
-from .workflow_engine import WorkflowEngine
 from .run_api import install_run_api
+from .idle_social import SocialPreempted
 
 
 def _build_runtime_services(runtime_context: dict[str, Any] | None = None):
@@ -40,7 +40,6 @@ def _build_runtime_services(runtime_context: dict[str, Any] | None = None):
             memory=memory,
             tools=ToolGateway(settings.default_workspace_root),
             social=SocialRuntime(enabled=settings.social_enabled),
-            workflow=WorkflowEngine(),
             skills=SkillRuntime(),
             runtime_context=runtime_context if runtime_context is not None else {},
         )
@@ -59,7 +58,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         social_task: asyncio.Task | None = None
-        workflow_task: asyncio.Task | None = None
         cognition_task: asyncio.Task | None = None
 
         async def run_cognition_loop():
@@ -86,6 +84,9 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                                 await app.state.runs.growth.tick(lambda: bool(app.state.runs.tasks))
                 except asyncio.CancelledError:
                     raise
+                except SocialPreempted:
+                    # Foreground work intentionally interrupts low-priority reflection.
+                    logging.getLogger(__name__).debug('Cognitive maintenance yielded to foreground work')
                 except Exception:
                     logging.getLogger(__name__).exception('Cognitive maintenance interrupted')
                 await asyncio.sleep(2)
@@ -98,12 +99,8 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                         await asyncio.sleep(5)
                         continue
                     async with maintenance_lock:
-                        if os.getenv("AZURJUUS_EXECUTION_BACKEND") == "legacy-test":
-                            with session_scope() as session:
-                                result = await service.run_idle_social_tick(session)
-                        else:
-                            from .idle_social import run_idle_social
-                            result = await run_idle_social(service, lambda: bool(app.state.runs.tasks))
+                        from .idle_social import run_idle_social
+                        result = await run_idle_social(service, lambda: bool(app.state.runs.tasks))
                     if result:
                         snapshot_payload = {"snapshot": result["snapshot"], "authorId": result["authorId"], "postId": result["postId"]}
                         await publish("post.created", snapshot_payload)
@@ -115,39 +112,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                     logging.getLogger(__name__).exception("Idle social tick failed")
                 await asyncio.sleep(max(settings.social_tick_seconds, 5))
 
-        async def publish_workflow_tick_result(result: dict[str, Any]) -> None:
-            payload = {
-                "snapshot": result.get("snapshot"),
-                "workflowId": result.get("workflowId"),
-                "conversationId": result.get("conversationId"),
-                "stageKey": result.get("stageKey"),
-                "skillRuns": result.get("skillRuns") or [],
-                "responderActorIds": result.get("actorIds") or [],
-            }
-            if result.get("activityUpdated"):
-                await publish("workflow.stage.changed", payload)
-            if result.get("messageCreated"):
-                await publish("conversation.message.created", payload)
-            if result.get("skillRuns"):
-                await publish("workflow.skill.completed", payload)
-            if result.get("reviewRequested"):
-                await publish("workflow.review.requested", payload)
-
-        async def run_workflow_loop() -> None:
-            await asyncio.sleep(4)
-            while True:
-                try:
-                    async with maintenance_lock:
-                        with session_scope() as session:
-                            result = await service.run_workflow_tick(session)
-                    if result:
-                        await publish_workflow_tick_result(result)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logging.getLogger(__name__).exception("Workflow tick failed")
-                await asyncio.sleep(max(settings.workflow_tick_seconds, 4))
-
         await hub.start()
         with session_scope() as session:
             service.ensure_seed(session)
@@ -157,8 +121,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
         app.state.runtime_context = runtime_context or {}
         if settings.social_enabled:
             social_task = asyncio.create_task(run_social_loop(), name="azurjuus-idle-social")
-        if settings.workflow_runtime_enabled and os.getenv("AZURJUUS_EXECUTION_BACKEND") == "legacy-test":
-            workflow_task = asyncio.create_task(run_workflow_loop(), name="azurjuus-workflow-runtime")
         await app.state.runs.start()
         if app.state.runs.cognition.enabled:
             cognition_task = asyncio.create_task(run_cognition_loop(), name='azurjuus-cognition')
@@ -174,10 +136,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                 social_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await social_task
-            if workflow_task is not None:
-                workflow_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await workflow_task
             await hub.stop()
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -187,10 +145,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def attach_local_user_session(request: Request, call_next):
-        legacy_mutations = {"/api/workflows/tick", "/api/tools/plan", "/api/tools/execute", "/api/tools/undo", "/api/approvals/resolve", "/api/workflows/interrupt", "/api/workflows/abort", "/api/workflows/help-request"}
-        if request.method == "POST" and request.url.path in legacy_mutations and os.getenv("AZURJUUS_EXECUTION_BACKEND") != "legacy-test":
-            from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "旧执行链已停用，请通过任务中心继续或重新提交任务。"}, status_code=409)
         if request.url.hostname not in {"127.0.0.1", "localhost", "::1", "testserver"}:
             from fastapi.responses import JSONResponse
             return JSONResponse({"detail": "Local host required"}, status_code=400)
@@ -227,64 +181,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
         app.state.runs.store.event(None, "workspace.changed", {"event": event_name})
         await hub.publish(event_name, payload)
 
-    async def publish_message_result(result: dict[str, Any]) -> None:
-        conversation_id = result.get("conversationId")
-        snapshot = result.get("snapshot")
-        payload = {
-            "conversationId": conversation_id,
-            "snapshot": snapshot,
-            "workflowId": result.get("workflowId"),
-            "skillRuns": result.get("skillRuns") or [],
-            "responderActorIds": result.get("responderActorIds") or [],
-        }
-        await publish("conversation.message.created", payload)
-        if result.get("skillRuns"):
-            await publish(
-                "workflow.skill.completed",
-                {
-                    **payload,
-                    "skillRuns": result.get("skillRuns") or [],
-                },
-            )
-        if result.get("pendingApprovalId"):
-            await publish(
-                "workflow.review.requested",
-                {
-                    "conversationId": conversation_id,
-                    "workflowId": result.get("workflowId"),
-                    "snapshot": snapshot,
-                    "pendingApprovalIds": [result.get("pendingApprovalId")],
-                    "targetKind": "workflow_launch_request",
-                },
-            )
-
-    async def process_deferred_message(
-        *,
-        conversation_id: str,
-        content: str,
-        mode: str,
-        user_message_id: str | None,
-    ) -> None:
-        try:
-            async with maintenance_lock:
-                with session_scope() as session:
-                    result = await service.send_message(
-                        session,
-                        conversation_id,
-                        content,
-                        mode,
-                        user_message_id=user_message_id,
-                    )
-            await publish_message_result(result)
-        except Exception as error:
-            await publish(
-                "conversation.message.updated",
-                {
-                    "conversationId": conversation_id,
-                    "error": str(error),
-                },
-            )
-
     @app.get("/api/health")
     async def api_health():
         return {
@@ -295,10 +191,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             "redis": settings.redis_url,
             "chroma": settings.chroma_url,
         }
-
-    @app.get("/api/contracts")
-    async def api_contracts():
-        return {"status": "ok", "routes": API_ROUTES, "realtimeEvents": REALTIME_EVENTS}
 
     @app.get("/api/workspace/load")
     async def api_workspace_load(request: Request):
@@ -321,132 +213,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             workspace = service.build_workspace_payload(session, actor_id=request.state.actor_id)
         return {"status": "ok", "snapshot": workspace["data"], "workspace": workspace}
 
-    @app.get("/api/workflows/{workflow_id}")
-    async def api_workflow_inspect(workflow_id: str):
-        try:
-            with session_scope() as session:
-                workflow = service.inspect_workflow(session, workflow_id)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        return {"status": "ok", "workflow": workflow}
-
-    @app.get("/api/workflows/{workflow_id}/timeline")
-    async def api_workflow_timeline(workflow_id: str):
-        try:
-            with session_scope() as session:
-                workflow = service.inspect_workflow(session, workflow_id)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        return {"status": "ok", "timeline": workflow.get("timeline") or [], "graph": workflow.get("graph") or {}, "workflow": workflow}
-
-    @app.get("/api/actors/{actor_id}/skills")
-    async def api_actor_skills(actor_id: str):
-        try:
-            with session_scope() as session:
-                payload = service.inspect_actor_skills(session, actor_id)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        return {"status": "ok", **payload}
-
-    @app.get("/api/tools/catalog")
-    async def api_tool_catalog():
-        with session_scope() as session:
-            payload = service.inspect_tool_catalog(session)
-        return {"status": "ok", **payload}
-
-    @app.get("/api/system/inspect")
-    async def api_system_inspect():
-        with session_scope() as session:
-            payload = service.inspect_system(session)
-        return {"status": "ok", **payload}
-
-    @app.post("/api/workflows/tick")
-    async def api_workflow_tick(payload: dict[str, Any] | None = None):
-        workflow_id = None
-        if isinstance(payload, dict) and payload.get("workflowId"):
-            workflow_id = str(payload.get("workflowId"))
-        with session_scope() as session:
-            result = await service.run_workflow_tick(session, workflow_id=workflow_id)
-        if not result:
-            return {"status": "idle", "workflowId": workflow_id}
-        tick_payload = {
-            "snapshot": result.get("snapshot"),
-            "workflowId": result.get("workflowId"),
-            "conversationId": result.get("conversationId"),
-            "stageKey": result.get("stageKey"),
-            "skillRuns": result.get("skillRuns") or [],
-            "responderActorIds": result.get("actorIds") or [],
-        }
-        if result.get("activityUpdated"):
-            await publish("workflow.stage.changed", tick_payload)
-        if result.get("messageCreated"):
-            await publish("conversation.message.created", tick_payload)
-        if result.get("skillRuns"):
-            await publish("workflow.skill.completed", tick_payload)
-        if result.get("reviewRequested"):
-            await publish("workflow.review.requested", tick_payload)
-        return {"status": "ok", **result}
-
-    @app.get("/api/skills/catalog")
-    async def api_skills_catalog():
-        with session_scope() as session:
-            skills = service.effective_skill_catalog(session)
-        return {"status": "ok", "skills": skills}
-
-    @app.get("/api/skills/proposals")
-    async def api_skill_proposals(actorId: str | None = None, status: str | None = None):
-        with session_scope() as session:
-            proposals = service.list_skill_proposals(session, actor_id=actorId, status=status)
-        return {"status": "ok", "proposals": proposals}
-
-    @app.post("/api/skills/proposals")
-    async def api_submit_skill_proposal(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = service.submit_skill_proposal(
-                    session,
-                    actor_id=str(payload.get("actorId") or ""),
-                    base_skill_id=str(payload.get("baseSkillId") or ""),
-                    title=str(payload.get("title") or ""),
-                    summary=str(payload.get("summary") or ""),
-                    prompt_patch=str(payload.get("promptPatch") or ""),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        await publish("skill.proposal.created", result)
-        await publish(
-            "workflow.review.requested",
-            {
-                "snapshot": result.get("snapshot"),
-                "pendingApprovalIds": [result.get("approvalId")],
-                "targetKind": "skill_proposal",
-            },
-        )
-        return {"status": "ok", **result}
-
-    @app.post("/api/skills/preview")
-    async def api_skills_preview(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                preview = service.preview_skill_selection(
-                    session,
-                    actor_id=str(payload.get("actorId") or ""),
-                    mode=str(payload.get("mode") or "chat"),
-                    prompt=str(payload.get("prompt") or ""),
-                    conversation_kind=str(payload.get("conversationKind") or "dm"),
-                    workflow_role=str(payload.get("workflowRole")) if payload.get("workflowRole") else None,
-                    source_kind=str(payload.get("sourceKind") or "message"),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        return {"status": "ok", **preview}
-
-    @app.post("/api/skills/reload")
-    async def api_skills_reload():
-        with session_scope() as session:
-            skills = service.reload_skill_catalog(session)
-        return {"status": "ok", "skills": skills}
-
     @app.post("/api/conversations/open")
     async def api_open_conversation(payload: dict[str, Any]):
         conversation_id = str(payload.get("conversationId") or "")
@@ -455,92 +221,11 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
         await publish("conversation.message.updated", {"conversationId": conversation_id, "snapshot": snapshot})
         return {"status": "ok", "snapshot": snapshot}
 
-    @app.post("/api/messages/send")
-    async def api_send_message(payload: dict[str, Any]):
-        conversation_id = str(payload.get("conversationId") or "")
-        content = str(payload.get("content") or "")
-        mode = str(payload.get("mode") or "chat")
-        await publish(
-            "conversation.typing",
-            {
-                "conversationId": conversation_id,
-                "actorId": "commander",
-                "mode": mode,
-            },
-        )
-        try:
-            with session_scope() as session:
-                accepted = service.accept_user_message(session, conversation_id, content, mode)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        snapshot = accepted["snapshot"]
-        await publish(
-            "conversation.message.created",
-            {
-                "conversationId": conversation_id,
-                "snapshot": snapshot,
-                "workflowId": accepted.get("workflowId"),
-                "skillRuns": [],
-                "responderActorIds": ["commander"],
-            },
-        )
-        asyncio.create_task(
-            process_deferred_message(
-                conversation_id=conversation_id,
-                content=accepted.get("content") or content,
-                mode=accepted.get("mode") or mode,
-                user_message_id=accepted.get("messageId"),
-            ),
-            name=f"azurjuus-message-{accepted.get('messageId') or conversation_id}",
-        )
-        return {"status": "accepted", "snapshot": snapshot}
-
-    @app.post("/api/workflows/dispatch")
-    async def api_dispatch_workflow(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = await service.dispatch_workflow(
-                    session,
-                    conversation_id=str(payload.get("conversationId") or "port-hub"),
-                    title=str(payload.get("title") or "新任务"),
-                    content=str(payload.get("content") or ""),
-                    mode=str(payload.get("mode") or "task"),
-                    actor_ids=[str(item) for item in payload.get("actorIds") or []] or None,
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        snapshot = result["snapshot"]
-        await publish("workflow.created", {"snapshot": snapshot})
-        await publish(
-            "workflow.review.requested",
-            {
-                "snapshot": snapshot,
-                "workflowId": result.get("workflowId"),
-                "stageKey": "planning",
-                "reviewRole": "user",
-            },
-        )
-        return {"status": "ok", "snapshot": snapshot}
-
     @app.post("/api/agents/favorite")
     async def api_favorite_agent(payload: dict[str, Any]):
         try:
             with session_scope() as session:
                 snapshot = service.toggle_favorite_agent(session, str(payload.get("agentId") or ""))
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        await publish("conversation.message.updated", {"snapshot": snapshot})
-        return {"status": "ok", "snapshot": snapshot}
-
-    @app.post("/api/conversations/background")
-    async def api_set_background(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                snapshot = service.set_conversation_background(
-                    session,
-                    conversation_id=str(payload.get("conversationId") or ""),
-                    background_id=str(payload.get("backgroundId") or "signal-blue"),
-                )
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         await publish("conversation.message.updated", {"snapshot": snapshot})
@@ -555,20 +240,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                     conversation_id=str(payload.get("conversationId") or ""),
                     agent_id=str(payload.get("agentId") or ""),
                     role=str(payload.get("role") or "member"),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        await publish("conversation.message.updated", {"snapshot": snapshot})
-        return {"status": "ok", "snapshot": snapshot}
-
-    @app.post("/api/groups/lifecycle")
-    async def api_group_lifecycle(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                snapshot = service.set_group_lifecycle(
-                    session,
-                    conversation_id=str(payload.get("conversationId") or ""),
-                    action=str(payload.get("action") or "keep"),
                 )
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
@@ -635,36 +306,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             "count": len(result["personas"]),
         }
 
-    @app.post("/api/personas/preview")
-    async def api_personas_preview(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = service.preview_personas(
-                    session,
-                    names=[str(item) for item in payload.get("names") or []],
-                    participant_count=int(payload.get("participantCount") or 0),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        except FileNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        return {"status": "ok", **result}
-
-    @app.post("/api/personas/apply")
-    async def api_personas_apply(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = service.apply_persona_preview(
-                    session,
-                    personas=[dict(item) for item in payload.get("personas") or []],
-                    names=[str(item) for item in payload.get("names") or []],
-                    participant_count=int(payload.get("participantCount") or 0),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        await publish("conversation.message.updated", {"snapshot": result["snapshot"]})
-        return {"status": "ok", "snapshot": result["snapshot"], "personas": result["personas"]}
-
     @app.post("/api/system/reset")
     async def api_system_reset(request: Request):
         from .personal_settings import require_idle
@@ -695,138 +336,6 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             callback(preset)
             return {"status": "ok", "preset": preset}
         return {"status": "unsupported", "preset": preset}
-
-    @app.post("/api/tools/plan")
-    async def api_tool_plan(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = service.plan_tool(
-                    session,
-                    actor_id=str(payload.get("actorId") or "commander"),
-                    tool_name=str(payload.get("toolName") or ""),
-                    args=payload.get("args") or {},
-                    workflow_id=str(payload.get("workflowId")) if payload.get("workflowId") else None,
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        await publish("tool.approval.requested", result)
-        if result.get("approvalId"):
-            await publish("workflow.review.requested", result)
-        return {"status": "ok", **result}
-
-    @app.post("/api/tools/execute")
-    async def api_tool_execute(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = service.execute_tool(session, str(payload.get("executionId") or ""))
-        except (ValueError, PermissionError) as error:
-            raise HTTPException(status_code=403, detail=str(error)) from error
-        await publish("tool.execution.completed", result)
-        return {"status": "ok", **result}
-
-    @app.post("/api/tools/undo")
-    async def api_tool_undo(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = service.undo_tool(session, str(payload.get("executionId") or ""))
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        await publish("tool.execution.completed", result)
-        return {"status": "ok", **result}
-
-    @app.post("/api/approvals/resolve")
-    async def api_approval_resolve(payload: dict[str, Any], request: Request):
-        try:
-            with session_scope() as session:
-                result = await service.resolve_approval(
-                    session,
-                    approval_id=str(payload.get("approvalId") or ""),
-                    decision=str(payload.get("decision") or "reject"),
-                    reviewer_actor_id=str(getattr(request.state, "actor_id", DEFAULT_USER["id"])),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except PermissionError as error:
-            raise HTTPException(status_code=403, detail=str(error)) from error
-        await publish("workflow.review.resolved", result)
-        if result.get("targetKind") in {"workflow_stage_review", "workflow_help_request"}:
-            await publish("workflow.stage.changed", {"snapshot": result["snapshot"], "workflowId": result.get("workflowId")})
-        if result.get("targetKind") == "workflow_launch_request" and result.get("status") == "approved":
-            await publish("workflow.created", {"snapshot": result["snapshot"], "workflowId": result.get("createdWorkflowId")})
-        if result.get("targetKind") == "skill_proposal":
-            await publish("skill.proposal.resolved", result)
-        pending_for_workflow = [
-            item
-            for item in (result.get("snapshot", {}).get("approvals") or [])
-            if item.get("status") == "pending"
-            and (
-                result.get("workflowId") is None
-                or item.get("workflowId") == result.get("workflowId")
-            )
-        ]
-        if pending_for_workflow:
-            await publish(
-                "workflow.review.requested",
-                {
-                    "snapshot": result["snapshot"],
-                    "workflowId": result.get("workflowId"),
-                    "pendingApprovalIds": [item.get("id") for item in pending_for_workflow],
-                },
-            )
-        return {"status": "ok", **result}
-
-    @app.post("/api/workflows/interrupt")
-    async def api_workflow_interrupt(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = await service.interrupt_workflow(
-                    session,
-                    workflow_id=str(payload.get("workflowId") or ""),
-                    body=str(payload.get("body") or ""),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        snapshot = result["snapshot"]
-        await publish("workflow.stage.changed", {"snapshot": snapshot})
-        await publish(
-            "workflow.review.requested",
-            {
-                "snapshot": snapshot,
-                "workflowId": result.get("workflowId"),
-                "stageKey": result.get("stageKey"),
-            },
-        )
-        return {"status": "ok", "snapshot": snapshot}
-
-    @app.post("/api/workflows/abort")
-    async def api_workflow_abort(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = await service.abort_workflow(
-                    session,
-                    workflow_id=str(payload.get("workflowId") or ""),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        snapshot = result["snapshot"]
-        await publish("workflow.stage.changed", {"snapshot": snapshot})
-        return {"status": "ok", "snapshot": snapshot}
-
-    @app.post("/api/workflows/help-request")
-    async def api_workflow_help_request(payload: dict[str, Any]):
-        try:
-            with session_scope() as session:
-                result = service.request_workflow_help(
-                    session,
-                    workflow_id=str(payload.get("workflowId") or ""),
-                    requester_actor_id=str(payload.get("requesterActorId") or ""),
-                    target_actor_id=str(payload.get("targetActorId") or ""),
-                    summary=str(payload.get("summary") or ""),
-                )
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        await publish("workflow.agent.help_requested", result)
-        return {"status": "ok", **result}
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):

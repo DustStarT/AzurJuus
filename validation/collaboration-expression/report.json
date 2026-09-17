@@ -1,0 +1,32 @@
+{
+  "model": "deepseek-flash",
+  "scope": "synthetic expression only; no actual file task",
+  "humanReview": "pending",
+  "scenes": [
+    {
+      "actor": "信浓",
+      "phase": "discussion-question",
+      "text": "嗯……先看内容，这个方向妾身认同。\n\n扩展名终究只是外衣，改过名字便不说明本意。共同要的，还是别把该归的归错。",
+      "characters": 55,
+      "seconds": 2.61,
+      "passed": true
+    },
+    {
+      "actor": "埃佛森",
+      "phase": "discussion-reply",
+      "text": "嗯，可以。读不到的那份单列，先不猜内容；另两份按正文归，我没意见。\n\n不过想确认一下——是扫描质量问题，还是原件本身就缺页？这决定要不要重扫。",
+      "characters": 71,
+      "seconds": 4.36,
+      "passed": true
+    },
+    {
+      "actor": "信浓",
+      "phase": "result",
+      "text": "两份已按正文归好，扫描的那份单列待查，没有删除任何文件。\n\n仍悬着一处：读不到，是扫描质量问题还是原件缺页……待看了再说，这决定要不要重扫。",
+      "characters": 70,
+      "seconds": 2.05,
+      "passed": true
+    }
+  ],
+  "status": "passed"
+}
