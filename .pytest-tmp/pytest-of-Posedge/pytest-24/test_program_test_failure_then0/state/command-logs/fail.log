@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "D:\CODE\AzurPort\azurjuus\.pytest-tmp\pytest-of-Posedge\pytest-24\test_program_test_failure_then0\work\sample.py", line 2, in <module>
-    assert add(2,3)==5
-           ^^^^^^^^^^^
-AssertionError
