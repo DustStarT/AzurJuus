@@ -69,8 +69,12 @@ class CollaborationDialogue:
         if c.expression and c.expression.enabled:
             sender = next(a for a in run['actors'] if a['id'] == sender_id)
             target = next(a for a in run['actors'] if a['id'] == target_id)
-            await c.expression.speak(run, sender, 'discussion_' + did + '-question',
-                '向同伴' + target['name'] + '表达以下观点，保持原意。', facts={'statement':text}, source=did + '-question')
+            spoken = await c.expression.speak(run, sender, 'discussion_' + did + '-question',
+                '把这次需要对方回应的问题或观点直接说出来，保留决定所需条件。', facts={'statement':text}, source=did + '-question',
+                audience={'kind':'peer', 'id':target_id, 'name':target['name']})
+            if spoken:
+                item['spokenText'] = spoken
+                self.patch(run_id, did, spokenText=spoken)
         elif c.message_callback:
             await c.message_callback(run_id, envelope)
         if not c.expression or not c.expression.enabled:
@@ -105,7 +109,17 @@ class CollaborationDialogue:
             prompt = f"同伴{sender['name']}在任务中对你说：{item['text']}\n总目标：{run['prompt']}\n请直接对同伴回应，可以质疑、承认疏忽、解释偏好或建议修正。只根据已有证据讨论；这是无工具讨论通道，不声称刚执行了任何新操作。简短自然，必要时空行分条说。"
             if relation:
                 prompt += '\n你对这位同伴的已有认识：' + relation['summary'] + '。称呼对方，不要把同伴当指挥官；只接这次问题，不轮流总结。未亲历的事不要说成共同回忆。'
-            reply = await c.execute_actor(run, actor, 'discussion_' + item['id'], prompt, c.settings_loader())
+            if c.expression and c.expression.enabled:
+                facts = {'question':item.get('spokenText') or item['text'], 'originalPoint':item['text']}
+                facts['recentTurns'] = [{'question':d.get('spokenText') or d['text'], 'reply':d['reply']}
+                    for d in run.get('discussions', []) if d.get('threadId') == item.get('threadId')
+                    and d['id'] != item['id'] and d.get('status') == 'completed'][-2:]
+                reply = await c.expression.speak(run, actor, 'discussion_' + item['id'],
+                    '回应同伴刚刚的问题。给出自己的判断或具体建议；不要代替对方执行、同意或宣布解决。', facts=facts,
+                    audience={'kind':'peer','id':sender['id'],'name':sender['name'],
+                        'relationship':relation['summary'] if relation else '未记录直接关系，不预设亲密'})
+            else:
+                reply = await c.execute_actor(run, actor, 'discussion_' + item['id'], prompt, c.settings_loader())
             if not str(reply or '').strip():
                 raise ValueError('同伴没有返回可显示的讨论回复。')
             self.patch(run_id, item['id'], status='completed', reply=reply)

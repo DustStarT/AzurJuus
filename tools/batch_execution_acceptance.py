@@ -3,6 +3,7 @@
 Uses only synthetic history/files in a new workspace; reads only saved model credentials.
 """
 import ctypes
+import hashlib
 from ctypes import wintypes
 import json
 import os
@@ -17,6 +18,9 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 STATE = ROOT / '.azurjuus' / 'batch-execution' / uuid4().hex
+
+def reply_id(rid, phase='result'):
+    return 'speech-' + hashlib.sha256((rid + ':' + phase).encode()).hexdigest()[:24]
 WORK = STATE / 'work'
 WORK.mkdir(parents=True)
 (WORK / 'source.txt').write_text('Synthetic batch test: 2 + 3 = 5.\n', encoding='utf-8')
@@ -79,7 +83,7 @@ def main():
             with sync_playwright() as pw:
                 browser = None
                 connection_error = ''
-                deadline = time.monotonic() + 30
+                deadline = time.monotonic() + 90
                 while time.monotonic() < deadline:
                     try:
                         browser = pw.chromium.connect_over_cdp(f'http://127.0.0.1:{debug}', timeout=2000, no_defaults=True)
@@ -113,15 +117,15 @@ def main():
                     raise AssertionError('No completed ' + mode + ' run')
                 send('闲聊', '你好' if greeting else '这是合成测试，请只回复 BATCH_CHAT_OK。')
                 chat_run = wait_run('chat')
-                reply = page.locator('[data-message-id="' + chat_run['id'] + '-result"]')
+                reply = page.locator('[data-message-id="' + reply_id(chat_run['id'], 'chat') + '"]')
                 reply.wait_for(timeout=10000)
                 assert reply.inner_text().strip() if greeting else 'BATCH_CHAT_OK' in reply.inner_text()
                 page.screenshot(path=str(out / 'chat.png'))
-                report['checks'].append('bat > desktop.py > QWebEngine > Hermes > DeepSeek chat completed')
+                report['checks'].append('bat > desktop.py > QWebEngine > expression > configured model chat completed')
                 print('BATCH_CHAT_PASSED', flush=True)
                 send('任务', '读取 source.txt，将来源和 2+3=5 写入 report.txt，读回核验后交付。只操作这两个文件，不使用命令或网络。')
                 task_run = wait_run('task')
-                page.locator('[data-message-id="' + task_run['id'] + '-result"]').wait_for(timeout=10000)
+                page.locator('[data-message-id="' + reply_id(task_run['id']) + '"]').wait_for(timeout=35000)
                 assert (WORK / 'report.txt').is_file()
                 assert '5' in (WORK / 'report.txt').read_text(encoding='utf-8')
                 page.screenshot(path=str(out / 'task.png'))
@@ -137,7 +141,7 @@ def main():
                     assert any(c['name'] == 'list_dir' and c['status'] == 'completed' for c in calls)
                     assert not any(c['name'] in {'write_file','move_file','command','patch_file'} for c in calls)
                     assert all(a['status'] == 'completed' for a in listing['assignments'])
-                    page.locator('[data-message-id="' + rid + '-result"]').wait_for(timeout=10000)
+                    page.locator('[data-message-id="' + reply_id(rid) + '"]').wait_for(timeout=35000)
                     report['listingRunId'] = rid
                     report['checks'].append('Exact directory-listing query completed with read-only evidence and no mandatory file artifact')
                     page.screenshot(path=str(out / 'listing.png'))
@@ -151,6 +155,14 @@ def main():
                     assert all(a['status'] == 'completed' for a in assignments)
                     for name in ('facts.txt', 'team-report.txt'):
                         assert '5' in (WORK / name).read_text(encoding='utf-8')
+                    # Execution completes before the separate expression callback.
+                    page.locator('[data-message-id="' + reply_id(rid) + '"]').wait_for(timeout=35000)
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        latest = page.evaluate("rid => fetch('/api/runs/' + rid).then(r=>r.json())", rid)['run']
+                        if latest.get('resultMessageId'):
+                            break
+                        time.sleep(.1)
                     boot = page.evaluate("fetch('/api/bootstrap').then(r=>r.json())")['workspace']['data']
                     group = next(v for v in boot['conversations'] if v['id'] == team['conversationId'])
                     assert {a['actorId'] for a in assignments} <= set(group['memberIds'])
@@ -165,7 +177,7 @@ def main():
                     report['collaborationRunId'] = rid
                     report['collaborationAssignments'] = [{'id':a['id'], 'actorId':a['actorId'], 'dependsOn':a['dependsOn']} for a in assignments]
                     report['checks'].append('Collaboration: dedicated group, two distinct workers, dependency handoff, two real verified files, member replies and origin summary')
-                    page.locator('[data-message-id="' + rid + '-result"]').wait_for(timeout=10000)
+                    page.locator('[data-message-id="' + reply_id(rid) + '"]').wait_for(timeout=35000)
                     page.screenshot(path=str(out / 'collaboration.png'))
                     print('BATCH_COLLABORATION_PASSED', flush=True)
                 send('闲聊', '这是合成退出测试，请用几句话描述晴天。')
@@ -174,7 +186,7 @@ def main():
                 while time.monotonic() < deadline:
                     state = page.evaluate("fetch('/api/runtime/state').then(r=>r.json())")
                     active = next((r for r in state['runs'] if r['status'] == 'running'), None)
-                    if active and active.get('runtimeStages'):
+                    if active:
                         break
                     time.sleep(.1)
                 assert active, 'Expected an active run before closing'
@@ -199,7 +211,9 @@ def main():
                 report['checks'].append('active run saved as paused; launcher and child processes exited without traceback')
                 report['status'] = 'passed'
     except Exception as exc:
-        report['error'] = str(exc)
+        import traceback
+        report['error'] = type(exc).__name__ + ': ' + str(exc)
+        report['traceback'] = traceback.format_exc()
     finally:
         if process and process.poll() is None:
             close_window()

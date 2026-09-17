@@ -1,4 +1,5 @@
 ﻿services:
+  # Optional server services; desktop launch does not read this file.
   postgres:
     image: postgres:16-alpine
     container_name: azurjuus-postgres

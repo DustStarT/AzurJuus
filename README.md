@@ -263,7 +263,7 @@ python tools/setup_runtime.py
 
 改了前端要重新构建：`npm ci` 然后 `npm run build`。
 
-> **Redis / PostgreSQL / Chroma 都是可选的**（见 `requirements-optional.txt`），本地启动不需要 Docker。默认走 SQLite；Redis 缺失时实时通道退回进程内，Chroma 缺失时记忆检索退回内存实现。想启用完整服务栈再 `docker compose up -d`。
+> **本地桌面不需要 Docker。** 默认使用 SQLite、进程内实时通道和本地记忆检索。`backend/` 是桌面必须的本地服务，不是多余的云端后台。Redis / PostgreSQL / Chroma 的可选部署文件已移至 [deployment/optional](deployment/optional/README.md)，不参与默认启动。
 
 ---
 

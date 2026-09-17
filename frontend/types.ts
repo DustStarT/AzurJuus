@@ -63,6 +63,7 @@ export interface Assignment {
   result?: Result;
 }
 export interface Run {
+  expressionError?: string;
   id: string;
   conversationId: string;
   prompt: string;

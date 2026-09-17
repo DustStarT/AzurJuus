@@ -61,6 +61,8 @@ class RunCoordinator:
             self.cognition.initialize()
             self.cognition.pump()
         self.store.recover()
+        if self.expression and self.expression.enabled:
+            self.expression.recovery_task = asyncio.create_task(self.expression.recover(), name='expression-recovery')
         for run in self.store.list():
             if run["status"] == "completed" and not run.get("resultMessageId") and run.get("result"):
                 await self.finish_callback(run["id"], run["result"]["summary"])
@@ -559,10 +561,13 @@ class RunCoordinator:
     async def _close_all(self):
         self.shutting_down = True
         pending = []
+        if self.expression and self.expression.recovery_task:
+            self.expression.recovery_task.cancel()
+            pending.append(self.expression.recovery_task)
         for rid, task in list(self.tasks.items()):
             if self.store.get(rid)["status"] not in {"completed", "cancelled"}:
                 self.store.update(rid, status="paused", error="程序退出，任务已保存；可在下次启动后继续。")
-                task.cancel()
+            task.cancel()
             pending.append(task)
         for _, task in list(self.tool_tasks.values()):
             if task is not asyncio.current_task() and task not in pending:

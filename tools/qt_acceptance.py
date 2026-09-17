@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -24,21 +25,31 @@ def main():
     window.resize(1280,720)
     window.show()
     report={'status':'failed','scale':app.primaryScreen().devicePixelRatio()}
+    def measure():
+        window._view.page().runJavaScript("""(()=>{window.__perf={frames:[],longTasks:[]};let last;const until=performance.now()+3500;function frame(t){if(last)window.__perf.frames.push(t-last);last=t;if(t<until)requestAnimationFrame(frame)}requestAnimationFrame(frame);try{new PerformanceObserver(l=>window.__perf.longTasks.push(...l.getEntries().map(e=>e.duration))).observe({type:'longtask',buffered:true})}catch{}const el=document.querySelector('.chat-panel');if(el)el.animate([{opacity:.85,transform:'translateY(6px)'},{opacity:1,transform:'none'}],{duration:220});})()""")
     def inspect():
-        window._view.page().runJavaScript("JSON.stringify({title:document.title,messages:document.querySelectorAll('.message-row').length,input:!!document.querySelector('[aria-label=\"消息输入\"]'),height:innerHeight})",finish)
+        window._view.page().runJavaScript("JSON.stringify({title:document.title,messages:document.querySelectorAll('.message-row').length,input:!!document.querySelector('[aria-label=\"消息输入\"]'),height:innerHeight,performance:window.__perf})",finish)
     def finish(value):
         try:
             page=json.loads(value or '{}')
+            frames=sorted(page.get('performance',{}).get('frames',[]))
+            report['frameP95Ms']=round(frames[min(len(frames)-1,int(len(frames)*.95))],2) if frames else None
+            report['performanceScope']='3.5 seconds foreground rendering sample, not sustained chat workload'
             report.update(page=page,status='passed' if page.get('input') and page.get('messages') else 'failed')
             window.grab().save(str(out/f"desktop-1280-scale-{report['scale']}.png"))
         finally:
             (out/f"report-scale-{report['scale']}.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
             print(json.dumps(report,ensure_ascii=False),flush=True)
+            report['closeStarted']=time.monotonic()
             window.close()
+    QTimer.singleShot(2500,measure)
     QTimer.singleShot(7000,inspect)
     QTimer.singleShot(30000,app.quit)
     app.exec()
     desktop.stop_local_server(server,thread)
+    report['shutdownSeconds']=round(time.monotonic()-report.pop('closeStarted',time.monotonic()),3)
+    report['serverStopped']=not thread.is_alive()
+    (out/f"report-scale-{report['scale']}.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     return 0 if report['status']=='passed' else 1
 
 

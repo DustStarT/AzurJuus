@@ -65,6 +65,9 @@ def install_run_api(app, service, settings):
             await coordinator.expression.speak(run, run['actors'][0], 'result', '告诉用户任务的结果，只说必要结论。',
                 facts={'status':run['status'], 'summary':text, 'artifacts':[a.get('path') if isinstance(a,dict) else a for a in run.get('artifacts', [])]})
         message_id = run_id + "-result"
+        if expressed:
+            phase = 'chat' if run['mode'] == 'chat' else 'result'
+            message_id = 'speech-' + hashlib.sha256((run_id + ':' + phase).encode()).hexdigest()[:24]
         with session_scope() as session:
             conversation = session.get(Conversation, run["conversationId"])
             if not expressed and conversation and session.get(Message, message_id) is None:
@@ -145,6 +148,7 @@ def install_run_api(app, service, settings):
     from .expression import ExpressionService
     from .terminal_api import install_terminal_api
     coordinator.expression = ExpressionService(coordinator)
+    service.expression = coordinator.expression
     install_terminal_api(app, coordinator)
     from .skill_growth import SkillGrowth
     coordinator.growth = SkillGrowth(coordinator, service)

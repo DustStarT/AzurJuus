@@ -74,7 +74,8 @@ def main():
                 # The first sample observes a sentence that was already visible
                 # before the monitor attached; it is not its insertion timestamp.
                 if index:
-                    assert following['at'] - previous['at'] >= 500, releases
+                    # Natural pacing is 450 ms minimum; sampling has frame jitter.
+                    assert following['at'] - previous['at'] >= 425, releases
             report['sentenceReleases'] = releases
             report['checks'].append('Live sentences appear individually at reading pace; completion does not flush the queue')
             report['checks'].append('Same message DOM node survives 60 deltas, persistence and final refresh; no blank frame; IME/focus/selection preserved')

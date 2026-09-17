@@ -1,5 +1,6 @@
 """Exercise actual QWebEngine send buttons, cloud replies and responsive close."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -58,9 +59,9 @@ def main():
         if closing:
             return
         runs = server.app.state.runs.store.list()
-        if os.getenv('AZURJUUS_QT_CLOSE_ACTIVE') == '1' and server.app.state.runs.bridges:
+        if os.getenv('AZURJUUS_QT_CLOSE_ACTIVE') == '1' and any(r['status']=='running' for r in runs):
             report['status'] = 'passed'
-            report['checks'].append('Close while actual Hermes is starting or generating')
+            report['checks'].append('Close while actual model request is running')
             finish()
             return
         if int(now - began) % 5 == 0:
@@ -84,7 +85,9 @@ def main():
                 report['error'] = run.get('error') or run['status']
                 finish()
             elif run and run['status'] == 'completed':
-                selector = '[data-message-id="' + run['id'] + '-result"] .message-bubble'
+                speech_phase = 'chat' if phase == 'chat' else 'result'
+                mid = 'speech-' + hashlib.sha256((run['id']+':'+speech_phase).encode()).hexdigest()[:24]
+                selector = '[data-message-id="' + mid + '"] .message-bubble'
                 marker = 'QT_CHAT_OK' if phase == 'chat' else ''
                 script = "(()=>{const el=document.querySelector(SELECTOR);return !!el && !!el.textContent.trim() && el.textContent.includes(MARKER)})()".replace('SELECTOR', json.dumps(selector)).replace('MARKER', json.dumps(marker))
                 window._page.runJavaScript(script, visible)

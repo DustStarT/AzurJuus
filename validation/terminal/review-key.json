@@ -1,0 +1,62 @@
+[
+  {
+    "scene": "1",
+    "A": "after",
+    "B": "before"
+  },
+  {
+    "scene": "2",
+    "A": "after",
+    "B": "before"
+  },
+  {
+    "scene": "3",
+    "A": "after",
+    "B": "before"
+  },
+  {
+    "scene": "4",
+    "A": "before",
+    "B": "after"
+  },
+  {
+    "scene": "5",
+    "A": "before",
+    "B": "after"
+  },
+  {
+    "scene": "6",
+    "A": "before",
+    "B": "after"
+  },
+  {
+    "scene": "7",
+    "A": "before",
+    "B": "after"
+  },
+  {
+    "scene": "8",
+    "A": "after",
+    "B": "before"
+  },
+  {
+    "scene": "9",
+    "A": "before",
+    "B": "after"
+  },
+  {
+    "scene": "10",
+    "A": "before",
+    "B": "after"
+  },
+  {
+    "scene": "11",
+    "A": "before",
+    "B": "after"
+  },
+  {
+    "scene": "12",
+    "A": "after",
+    "B": "before"
+  }
+]

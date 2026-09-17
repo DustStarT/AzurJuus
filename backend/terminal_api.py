@@ -6,6 +6,13 @@ class CardAction(BaseModel):
     action: str
 
 def install_terminal_api(app, coordinator):
+    @app.get('/api/runs/{run_id}/transcripts')
+    async def transcripts(run_id: str):
+        import json
+        with coordinator.store.connect() as db:
+            rows = db.execute("SELECT seq,payload FROM events WHERE run_id=? AND type='execution.message.complete' ORDER BY seq DESC LIMIT 50",(run_id,)).fetchall()
+        return {'records':[{'seq':r['seq'],**json.loads(r['payload'])} for r in reversed(rows)]}
+
     @app.get('/api/actors/{actor_id}/character-card')
     async def inspect(actor_id: str):
         try:

@@ -4,7 +4,8 @@ import { enqueueSpeech, liveSpeechIds } from './speechQueue';
 const props = defineProps<{ text: string; streaming?: boolean; single?: boolean; messageId?:string; conversationId?:string }>();
 const emit = defineEmits<{ reveal: [] }>();
 // History is immediate; live output commits complete sentences without final flush.
-const queued = !!props.messageId && liveSpeechIds.delete(props.messageId);
+const fresh = !!props.messageId && liveSpeechIds.delete(props.messageId);
+const queued = fresh && props.text.length <= 180 && !props.single;
 const live = ref(!!props.streaming || queued);
 let release: (()=>void) | undefined;
 let waiting = queued;
@@ -73,7 +74,8 @@ onBeforeUnmount(() => { clearTimeout(timer); release?.(); });
 </template>
 <style scoped>
 .speech-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
-.speech-stack .message-bubble { max-width: 100%; overflow-wrap: anywhere; }
+.speech-stack .message-bubble { max-width: min(100%, 36em); overflow-wrap: anywhere; }
+:global(.message-row--self) .speech-stack { align-items: flex-end; }
 .speech-enter { animation: speech-in 180ms ease-out both; transform-origin: left bottom; }
 .sentence-enter { animation: sentence-in 180ms ease-out both; }
 .speech-wait { padding: 8px 16px; color: #7199aa; }

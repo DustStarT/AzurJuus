@@ -86,7 +86,7 @@ async def run_idle_social(service, is_busy=lambda: False):
         actor_payload = service.serialize_actor(author, service._actor_skill_rows(session, author_id))
 
     if mind and mind.enabled:
-        plan_prompt = plan.prompt + '\n' + mind.context(author_id, social=True) + '\n没有分享意愿时只输出 [SKIP]；不要编造未发生的生活经历。'
+        plan_prompt = plan.prompt + '\n' + mind.context(author_id, social=True) + '\n没有分享意愿时只输出 [SKIP]；个人日常属于虚构分享，不能声称用户或未参与的同伴在场。'
         from .cognition_models import MindState, Experience
         with session_scope() as session:
             state = mind.state(session, author_id)
@@ -97,8 +97,12 @@ async def run_idle_social(service, is_busy=lambda: False):
         plan_prompt = plan.prompt
 
     try:
-        body = await _generate(service.bundle.runtime.generate_social_post(settings=settings, agent=actor_payload,
-            prompt=plan_prompt, memory_snippets=memories, skill_context=selection.prompt_patch), is_busy)
+        expression = getattr(service,'expression',None)
+        if expression and expression.enabled:
+            body = await _generate(expression.social(actor_payload,plan_prompt,settings),is_busy)
+        else:
+            body = await _generate(service.bundle.runtime.generate_social_post(settings=settings, agent=actor_payload,
+                prompt=plan_prompt, memory_snippets=memories, skill_context=selection.prompt_patch), is_busy)
         if not str(body or "").strip() or str(body).strip() == '[SKIP]':
             return None
         # Comment plans are plain snapshots, detached before any network wait.
@@ -121,7 +125,10 @@ async def run_idle_social(service, is_busy=lambda: False):
                     "agent": service.serialize_actor(actor, service._actor_skill_rows(session, actor.id)),
                     "prompt": prompt, "relationship_hint": hint, "skill_context": skill.prompt_patch}})
         for comment in comments:
-            comment["body"] = await _generate(service.bundle.runtime.generate_social_comment(**comment["request"]), is_busy)
+            if expression and expression.enabled:
+                comment['body'] = await _generate(expression.social(comment['request']['agent'],comment['request']['prompt'],settings),is_busy)
+            else:
+                comment["body"] = await _generate(service.bundle.runtime.generate_social_comment(**comment["request"]), is_busy)
     except SocialPreempted:
         return None
 
@@ -153,7 +160,7 @@ async def run_idle_social(service, is_busy=lambda: False):
         result = {"authorId": author_id, "postId": post.id, "commentCount": count, "snapshot": service.build_snapshot(session)}
     if mind and mind.enabled:
         mind.store.event(None, 'mind.observation', {'key':'post:' + result['postId'], 'actorIds':observers,
-            'kind':'social', 'text':body, 'data':{'scope':'team_public', 'shareable':True,'speakerId':author_id,'peers':observers}})
+            'kind':'social', 'text':body, 'data':{'scope':'team_public', 'shareable':True,'fictionalDaily':True,'speakerId':author_id,'peers':observers}})
         for item in comments:
             if item['actorId'] in observers:
                 mind.store.event(None, 'mind.observation', {'key':'post:' + result['postId'] + ':' + item['actorId'],

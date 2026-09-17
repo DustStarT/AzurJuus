@@ -26,6 +26,7 @@ from .services import AzurJuusService, ServiceBundle
 from .tool_gateway import ToolGateway
 from .workflow_engine import WorkflowEngine
 from .run_api import install_run_api
+from .idle_social import SocialPreempted
 
 
 def _build_runtime_services(runtime_context: dict[str, Any] | None = None):
@@ -86,6 +87,9 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                                 await app.state.runs.growth.tick(lambda: bool(app.state.runs.tasks))
                 except asyncio.CancelledError:
                     raise
+                except SocialPreempted:
+                    # Foreground work intentionally interrupts low-priority reflection.
+                    logging.getLogger(__name__).debug('Cognitive maintenance yielded to foreground work')
                 except Exception:
                     logging.getLogger(__name__).exception('Cognitive maintenance interrupted')
                 await asyncio.sleep(2)
