@@ -48,7 +48,7 @@ AzurJuus 是一个在 Windows 本机运行的角色化 Agent 桌面应用。界�
 | 普通对话 | 由角色卡、可见经历和最近对话组成上下文，无工具权限，输出经过规则校验 | 表达自然度仍需人工对照评价 |
 | 单人任务 | 执行 → 交付证据检查 → 独立复核 → 表达层生成回复 | 开放式报告的语义正确性仍需合适的验收条件 |
 | 多成员协作 | 依赖子任务、最多两名成员并行、成员定向讨论、结果回传原会话 | 讨论建议不能直接改写别人的任务，调整仍需调度校验 |
-| 文件与文档 | 分页、搜索、精确补丁、复制移动、快照与撤销；PDF / DOCX / XLSX 读写 | 扫描版 PDF 只标记需要 OCR，未实现自动 OCR |
+| 文件与文档 | 分页、搜索、精确补丁、复制移动、快照与撤销；PDF 读取，DOCX / XLSX 读写 | 扫描版 PDF 只标记需要 OCR，未实现自动 OCR |
 | 编程 | 修改文件、执行命令、检查输出与退出码、超时与取消 | 示例代码修改与测试修复通过，不代表能自动维护任意仓库 |
 | 浏览器 | Playwright 导航、读取、填写、点击、下载，使用任务独立配置 | 本地表单与下载通过，不承诺任意网站稳定自动化 |
 | Windows 桌面 | UIA 控件交互、窗口焦点、DPI 缩放、资源管理器整理、停止检查 | 含 Explorer 导航与剪切粘贴实机记录，不含 Office/WPS GUI |
@@ -220,40 +220,69 @@ Redis、PostgreSQL 和 Chroma 都是可选的，配置与依赖在 `deployment/o
 
 ```text
 azurjuus/
-├─ frontend/                     Vue 3 + TypeScript 界面
-│  ├─ App.vue                    主界面、视图切换与左右对齐判定
-│  ├─ SpeechBubbles.vue          分段气泡渲染
-│  ├─ speechQueue.ts             按会话串行的呈现队列
-│  ├─ WorkDrawer.vue             工作抽屉
-│  ├─ MindPanel.vue              人物认知面板
-│  ├─ MethodPanel.vue            方法与成长面板
-│  ├─ SettingsPanel.vue          设置
-│  └─ theme.css                  设计变量与组件样式
-├─ backend/
-│  ├─ app.py                     FastAPI 装配、静态资源与业务接口
-│  ├─ run_api.py                 任务、审批、产物与运行时事件接口
-│  ├─ run_coordinator.py         调度、依赖、并发、交付验收与复核
-│  ├─ hermes_bridge.py           Hermes 子进程 JSON-RPC 桥接
-│  ├─ capabilities.py            文件 / 文档 / 命令 / 浏览器 / 桌面能力
-│  ├─ tool_gateway.py            权限检查与路径校验
-│  ├─ run_store.py               runs / calls / events / speeches / FTS5
-│  ├─ expression.py              无工具表达服务与输出校验
-│  ├─ collaboration_dialogue.py  成员定向讨论
-│  ├─ cognition.py               人物状态、经历与关系
-│  ├─ skill_runtime.py           方法选择与使用记录
-│  ├─ skill_growth.py            候选试用、启用与回退
-│  ├─ terminal_characters.py     基础角色卡与世界条目
-│  ├─ workflow_view.py           历史流程只读展示
-│  └─ services.py                业务数据装配
-├─ deployment/optional/          可选的 Docker 服务与依赖
-├─ resources/characters/         角色导入素材（JSON + prompt）
-├─ tools/                        安装、自检与验收脚本
-├─ tests/                        后端回归测试
-├─ docs/                         本地说明文档（不纳入版本控制）
-├─ validation/                   本地验收产物（不纳入版本控制）
-├─ desktop.py / server.py        桌面壳与纯网页服务入口
-├─ launch_azurjuus.bat / .vbs    启动入口
-└─ hermes.lock.json              锁定的 Hermes 版本与提交
+├─ backend/                        本机 HTTP 服务、调度、权限、存储、人物与表达
+│  ├─ app.py                       FastAPI 装配、静态资源与业务接口
+│  ├─ run_api.py                   任务、审批、产物与运行时事件接口
+│  ├─ run_coordinator.py           调度、依赖、并发、交付验收与复核
+│  ├─ run_store.py                 持久化准入、检查点与有序事件，事务不等待模型
+│  ├─ hermes_bridge.py             锁定版本的 Hermes JSON-RPC 传输
+│  ├─ capabilities.py              任务级本地工具：文件、文档、命令、浏览器、桌面
+│  ├─ tool_gateway.py              遗留工具 schema 与旧网关（生产执行走 capabilities.py）
+│  ├─ mcp_host.py                  最小 MCP stdio 中继，执行与授权归应用所有
+│  ├─ expression.py                无工具表达生成，带幂等的投递发件箱
+│  ├─ personality.py               共享表达规则：影响措辞，不影响工具权限
+│  ├─ character_behavior.py        对已发布角色素材的行为解读
+│  ├─ terminal_api.py              终端会话、角色卡、世界书与提示预览接口
+│  ├─ terminal_characters.py       带版本的基础角色卡与世界条目
+│  ├─ collaboration_dialogue.py    与文件执行并行的成员讨论，消息持久化
+│  ├─ cognition.py                 事件驱动的人物记忆与 CAS 反思
+│  ├─ cognition_api.py             人物心智、关系与经历接口
+│  ├─ cognition_models.py          业务侧认知投影，执行真相仍在 RunStore
+│  ├─ skill_runtime.py             方法选择与使用记录
+│  ├─ skill_growth.py              基于证据的候选晋升，使用隔离的真实工具执行
+│  ├─ social_runtime.py            社交运行时
+│  ├─ idle_social.py               低优先级动态与评论生成
+│  ├─ personal_settings.py         本地用户档案与记录、记忆管理
+│  ├─ llm_runtime.py               模型调用与流式处理
+│  ├─ memory.py                    记忆检索
+│  ├─ realtime.py                  实时事件通道
+│  ├─ workflow_view.py             历史流程只读展示，新任务走 RunCoordinator
+│  ├─ services.py                  业务数据装配
+│  ├─ database.py                  业务库会话与引擎
+│  ├─ models.py                    业务数据模型
+│  ├─ migrations.py                数据库迁移
+│  ├─ credentials.py               凭据加密存取，保存后不再跨越 HTTP 边界
+│  ├─ config.py / constants.py     配置读取与常量默认值
+│  ├─ sqlite_policy.py             规避未修复 SQLite 的 WAL-reset 竞态
+│  └─ __init__.py                  包导出
+├─ frontend/                       Vue 3 + TypeScript 界面
+│  ├─ App.vue                      主界面、视图切换与左右对齐判定
+│  ├─ SpeechBubbles.vue            分段气泡渲染
+│  ├─ speechQueue.ts               按会话串行的呈现队列
+│  ├─ WorkDrawer.vue               工作抽屉
+│  ├─ MindPanel.vue                人物认知面板
+│  ├─ MethodPanel.vue              方法与成长面板
+│  ├─ SettingsPanel.vue            设置
+│  ├─ CharacterCard.vue / Avatar.vue / Icon.vue   角色卡、头像占位与图标
+│  ├─ api.ts / types.ts / assets.ts               接口客户端、共享类型、资源路径
+│  ├─ main.ts                      应用入口
+│  └─ theme.css                    设计变量与组件样式
+├─ deployment/optional/            可选的 Docker 服务与依赖
+├─ resources/characters/           角色导入素材（JSON + prompt）
+├─ tools/                          安装、自检与验收脚本
+├─ tests/                          后端回归测试
+├─ docs/                           本地说明文档（不纳入版本控制）
+├─ validation/                     本地验收产物（不纳入版本控制）
+├─ desktop.py                      桌面壳入口（PySide6 / QWebEngine）
+├─ server.py                       纯网页服务入口
+├─ launch_azurjuus.bat / .vbs      启动入口
+├─ index.html / vite.config.ts     前端入口与构建配置
+├─ tsconfig.json / package.json    类型配置与前端依赖脚本
+├─ requirements*.txt               运行、测试与打包依赖，另有 Windows/Py3.12 约束锁
+├─ .env.example                    配置样例
+├─ hermes.lock.json                锁定的 Hermes 版本与提交
+├─ screenshot.png                  README 主界面截图
+└─ LICENSE
 ```
 
 如果需要读代码，建议按这个顺序，不要从 `services.py` 第一行开始：
