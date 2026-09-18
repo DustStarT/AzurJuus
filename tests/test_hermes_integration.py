@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -79,6 +80,9 @@ async def test_real_hermes_gateway_calls_only_host_mcp(tmp_path, monkeypatch):
     monkeypatch.setenv("AZURJUUS_HERMES_SOURCE", str(ROOT / ".vendor/hermes-agent"))
     # Exercise a relative home even when Windows temp and checkout use different drives.
     monkeypatch.chdir(tmp_path.parent)
+    if os.name == 'nt':
+        # Reproduce a windowless desktop parent; protocol children still need python.exe.
+        monkeypatch.setattr(sys, 'executable', str(Path(sys.executable).with_name('pythonw.exe')))
     relative_home = Path(os.path.relpath(tmp_path / "hermes", Path.cwd()))
     assert not relative_home.is_absolute()
     bridge = HermesBridge(relative_home, {"llmModel":"azur-test", "llmBaseUrl":base + "/v1", "llmApiKey":"local-test-only"}, base + "/tool", "host-test-token", event)

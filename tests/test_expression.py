@@ -151,6 +151,49 @@ def test_invalid_json_gets_one_repair(world):
     assert len(attempts) == 2
 
 
+def test_group_chat_replies_are_distinct_attributed_and_idempotent(world, monkeypatch):
+    c, client, _ = world
+    c.expression.enabled = True
+    monkeypatch.setattr(c, 'launch', lambda rid: None)
+    c.settings_loader = lambda: {'llmApiKey':'synthetic'}
+    requests = []
+    async def generate(messages, settings):
+        requests.append(messages)
+        value = json.loads(messages[-1]['content'])
+        return {'segments':['我也在。'], 'sourceIds':[value['sourceId']]}
+    c.expression.generate = generate
+    client.post('/api/workspace/save',json={'workspace':{'settings':{'authorizedWorkspaceRoot':str(c.store.path.parent)}}}).raise_for_status()
+    response = client.post('/api/messages/send', json={'conversationId':'port-hub','mode':'chat','content':'你好，各位','requestId':uuid4().hex})
+    assert response.status_code == 200, response.text
+    rid = response.json()['runId']
+    asyncio.run(c.run(rid))
+    run = c.store.get(rid)
+    assert run['status'] == 'completed', run.get('error')
+    assert len(requests) == len(run['actors']) > 1
+    assert '当前群聊' in json.dumps(requests[0],ensure_ascii=False)
+    assert any(m['content'] == run['actors'][0]['name']+'：我也在。' for m in requests[1])
+    events = [e for e in c.store.events() if e['type'] == 'message.complete']
+    assert len({e['payload']['messageId'] for e in events}) == len(run['actors'])
+    assert len({e['payload']['actorId'] for e in events}) == len(run['actors'])
+    asyncio.run(c.group_chat(run))
+    assert len(requests) == len(run['actors'])
+
+
+def test_task_answer_can_preserve_multiple_book_descriptions(world):
+    c, _, (aid,*_) = world
+    run, actor = fixture_run(c, aid)
+    run = c.store.update(run['id'],mode='task',prompt='这些书讲什么？')
+    answer = '甲书介绍计算机系统，讨论处理器、内存和程序执行。乙书介绍统计方法，讨论抽样与误差。丙书介绍植物分类，讨论叶形和生境。' * 4
+    requests = []
+    async def generate(messages, settings):
+        requests.append(messages)
+        return {'segments':[answer],'sourceIds':[run['id']+':result']}
+    c.expression.generate = generate
+    assert asyncio.run(c.expression.speak(run,actor,'result','告知结果',
+        {'request':run['prompt'],'summary':answer,'review':{'summary':'审查通过'}})) == answer
+    assert '复核通过只是可信度背景' in requests[0][0]['content']
+
+
 def test_card_override_and_prompt_preview(world):
     c, client, (aid,*_) = world
     original = inspect(aid)['text']

@@ -12,6 +12,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def worker_python():
+    # Protocol workers need standard streams even when the UI uses pythonw.
+    executable = Path(sys.executable)
+    return str(executable.with_name('python.exe') if executable.name.lower() == 'pythonw.exe' else executable)
+
+
 class HermesUnavailable(RuntimeError):
     pass
 
@@ -75,7 +81,7 @@ class HermesBridge:
             "agent": {"max_turns": int(self.settings.get("maxTurns", 80))},
             "platform_toolsets": {"cli": ["mcp-azurjuus"]},
             "tools": {"tool_search": {"enabled": "off"}},
-            "mcp_servers": {"azurjuus": {"command": sys.executable, "args": ["-X", "utf8", str(ROOT / "backend" / "mcp_host.py")], "env": {"AZURJUUS_TOOL_ENDPOINT": "${AZURJUUS_TOOL_ENDPOINT}", "AZURJUUS_TOOL_TOKEN": "${AZURJUUS_TOOL_TOKEN}", "AZURJUUS_TOOL_ACTIONS": "${AZURJUUS_TOOL_ACTIONS}"}, "timeout": 3600}},
+            "mcp_servers": {"azurjuus": {"command": worker_python(), "args": ["-X", "utf8", str(ROOT / "backend" / "mcp_host.py")], "env": {"AZURJUUS_TOOL_ENDPOINT": "${AZURJUUS_TOOL_ENDPOINT}", "AZURJUUS_TOOL_TOKEN": "${AZURJUUS_TOOL_TOKEN}", "AZURJUUS_TOOL_ACTIONS": "${AZURJUUS_TOOL_ACTIONS}"}, "timeout": 3600}},
             "terminal": {"backend": "local"},
             "memory": {"memory_enabled": False, "user_profile_enabled": False},
         }
@@ -91,7 +97,7 @@ class HermesBridge:
         from .capabilities import CATALOG
         env["AZURJUUS_TOOL_ACTIONS"] = json.dumps(self.settings.get("_allowedActions", list(CATALOG)))
         await self.stage("starting", "正在启动执行核心")
-        self.process = await asyncio.create_subprocess_exec(sys.executable, "-m", "tui_gateway.entry", cwd=source, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=8 * 1024 * 1024, creationflags=0x08000000 if os.name == "nt" else 0)
+        self.process = await asyncio.create_subprocess_exec(worker_python(), "-m", "tui_gateway.entry", cwd=source, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=8 * 1024 * 1024, creationflags=0x08000000 if os.name == "nt" else 0)
         self.diagnostic("process.pid=" + str(self.process.pid))
         self.reader = asyncio.create_task(self._read())
         self.stderr_reader = asyncio.create_task(self._stderr())
