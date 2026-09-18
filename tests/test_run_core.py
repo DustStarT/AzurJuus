@@ -259,3 +259,26 @@ async def test_stopped_task_cannot_send_desktop_input(runtime):
     with pytest.raises(PermissionError, match="没有执行权限"):
         await call(c, "desktop", {"op":"shortcut","handle":123,"action":"paste"}, "afterstop")
     assert store.call("afterstop") is None
+
+
+@pytest.mark.asyncio
+async def test_review_verdict_does_not_replace_user_answer(runtime):
+    c, store, rid, _ = runtime
+    answer = '甲书讲计算机系统；乙书讲统计；丙书只有扫描图像，无法确定正文内容。'
+    run = store.get(rid)
+    run['assignments'][0].update(status='completed',result={'summary':answer,'checks':[],'artifacts':[]})
+    store.update(rid,assignments=run['assignments'])
+    async def already_done(*args): pass
+    async def review(*args):
+        store.update(rid,reviewResult={'summary':'审查通过。','unresolved':[],'artifacts':[],'checks':[]})
+    finished=[]
+    async def finish(rid,text): finished.append(text)
+    c.execute_assignments=already_done
+    c.execute_actor=review
+    c.finish_callback=finish
+    await c.run(rid)
+    result=store.get(rid)
+    assert result['status']=='completed',result.get('error')
+    assert result['result']['summary']==answer
+    assert result['reviewResult']['summary']=='审查通过。'
+    assert finished==[answer]

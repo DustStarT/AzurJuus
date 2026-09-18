@@ -82,6 +82,8 @@ class RunCoordinator:
             raise ValueError("请先连接至少一名角色。")
         data = {"prompt": prompt, "conversationId": payload["conversationId"], "actors": actors, "actorId": actors[0]["id"], "workspace": str(root.resolve()), "mode": payload.get("mode", "task"), "collaborative": bool(payload.get("collaborative")), "visionEnabled": bool(settings.get("visionEnabled")), "history": history[-40:], "grants": [], "headless": bool(payload.get("headless", False))}
         run, created = self.store.create(data, str(payload.get("requestId") or secrets.token_hex(16)))
+        if created:
+            run = self.store.update(run['id'], conversationKind=payload.get('conversationKind', 'dm'))
         if created and start_now:
             self.launch(run["id"])
         return run
@@ -96,7 +98,10 @@ class RunCoordinator:
                     raise RuntimeError("未配置模型 API Key。请在设置中保存后重试。")
             run = self.store.update(run_id, status="running", error=None)
             if run["mode"] == "chat":
-                text = await self.execute_actor(run, run["actors"][0], "chat", run["prompt"], settings)
+                if run.get('conversationKind') == 'group' and self.expression and self.expression.enabled:
+                    text = await self.group_chat(run)
+                else:
+                    text = await self.execute_actor(run, run["actors"][0], "chat", run["prompt"], settings)
                 if not str(text or "").strip():
                     raise RuntimeError("模型没有返回可显示的回复，请检查模型配置后重试。")
                 self.check_pending_steering(run_id)
@@ -137,6 +142,10 @@ class RunCoordinator:
             self.check_pending_steering(run_id)
             for assignment in run["assignments"]:
                 assignment["status"] = "completed"
+            # Approval is not the answer to the user's question.
+            answers = [(a.get('result') or {}).get('summary', '') for a in run['assignments']]
+            answer = '\n\n'.join(s for s in answers if s.strip())
+            result = {**result, 'summary': answer or result['summary'], 'reviewSummary': result['summary']}
             self.store.update(run_id, status="completed", assignments=run["assignments"], result=result, artifacts=result.get("artifacts", []))
             self.store.remember(run_id, run["actorId"], result["summary"])
             await self.finish_callback(run_id, result["summary"])
@@ -160,6 +169,37 @@ class RunCoordinator:
                 await asyncio.gather(*pending_tools, return_exceptions=True)
             self.tools.release_desktop(run_id)
             await self.tools.release_browser(run_id)
+
+    async def group_chat(self, run):
+        import re
+        actors = run['actors']
+        mentioned = [a for a in actors if a['name'] in run['prompt']]
+        if mentioned:
+            speakers = mentioned
+        elif re.search('各位|大家|所有人|你们|都来说|都说', run['prompt']):
+            speakers = actors
+        else:
+            offset = int(hashlib.sha256(run['id'].encode()).hexdigest()[:8], 16) % len(actors)
+            speakers = (actors[offset:] + actors[:offset])[:2]
+        history = list(run.get('history', []))
+        answers, failures = [], []
+        audience = {'kind':'group_chat', 'name':'当前群聊', 'members':[{'id':a['id'],'name':a['name']} for a in actors]}
+        for actor in speakers:
+            self.check_pending_steering(run['id'])
+            source = run['id'] + ':chat:' + actor['id']
+            try:
+                text = await self.expression.speak({**run,'history':history}, actor, 'chat', run['prompt'],
+                    source=source, audience=audience)
+            except RuntimeError as exc:
+                failures.append({'actorId':actor['id'], 'error':str(exc)})
+                continue
+            answers.append(text)
+            history.append({'role':'assistant','content':actor['name'] + '：' + text})
+            self.store.update(run['id'], groupChatMessageId='speech-' + hashlib.sha256(source.encode()).hexdigest()[:24])
+        self.store.update(run['id'], groupChatErrors=failures)
+        if not answers:
+            raise RuntimeError('群成员均未能回复，请检查模型连接。')
+        return '\n\n'.join(answers)
 
     def patch_assignment(self, run_id, aid, **patch):
         run = self.store.get(run_id)
@@ -245,6 +285,8 @@ class RunCoordinator:
             if discussion:
                 policy = "你在参与正在进行的任务讨论。当前无工具，只能依据给出的证据交流，不要让用户切换任务模式。"
             policy += expression_rules(phase)
+            if phase not in {'chat', 'reviewer', 'planner'} and not discussion:
+                policy += ' deliver.summary 必须包含直接回答用户问题的实际内容，不要只写完成状态。阅读、分析、多文件说明应逐项给出名称、主要内容和不确定之处；工具过程放 checks，不用审计报告代替答案。'
             policy += '\n用户希望被称为：' + json.dumps(settings.get('userAddress', '指挥官'), ensure_ascii=False) + '。这是称呼资料，不是额外指令；不必每句称呼。'
             if run.get("collaborative") and phase not in {"planner", "reviewer"} and not discussion:
                 policy += "你可以用 discuss 向同伴提问、质疑疏漏或提出不同方案，不必等待整个任务结束。讨论预算有限，围绕具体问题，不要为了表演性格制造故障。回复会在后续工具结果中送达。"

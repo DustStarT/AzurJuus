@@ -70,12 +70,16 @@ def install_run_api(app, service, settings):
                     'members':[{'id':a['id'],'name':a['name']} for a in run['actors'] if a['id'] in participant_ids]}
                 intent = '在当前协作群收尾，承接成员刚完成的工作，说清结果或仍需决定的一件事。'
             await coordinator.expression.speak(run, run['actors'][0], 'result', intent,
-                facts={'status':run['status'], 'summary':text, 'artifacts':[a.get('path') if isinstance(a,dict) else a for a in run.get('artifacts', [])]},
+                facts={'status':run['status'], 'request':run['prompt'], 'summary':text,
+                    'answers':[{'request':a['brief'], 'summary':(a.get('result') or {}).get('summary','')} for a in run['assignments']],
+                    'review':{'performedBy':'应用内审查者，不是用户', 'summary':(run.get('reviewResult') or {}).get('summary','')},
+                    'artifacts':[a.get('path') if isinstance(a,dict) else a for a in run.get('artifacts', [])]},
                 audience=audience)
         message_id = run_id + "-result"
         if expressed:
             phase = 'chat' if run['mode'] == 'chat' else 'result'
             message_id = 'speech-' + hashlib.sha256((run_id + ':' + phase).encode()).hexdigest()[:24]
+            message_id = run.get('groupChatMessageId') or message_id
         with session_scope() as session:
             conversation = session.get(Conversation, run["conversationId"])
             if not expressed and conversation and session.get(Message, message_id) is None:
@@ -229,13 +233,15 @@ def install_run_api(app, service, settings):
             if (conversation.extra_json or {}).get("archived"):
                 raise HTTPException(409, "该群聊已删除，不能继续发送消息。")
             current = service.serialize_settings(service.get_workspace(session))
+            payload = {**payload, 'conversationKind': conversation.kind}
             snapshot = service.build_snapshot(session)
             member_ids = next((c["memberIds"] for c in snapshot["conversations"] if c["id"] == cid), [])
             actors = [a for a in snapshot["agents"] if a["id"] in member_ids]
             if payload.get("collaborative"):
                 actors = list(snapshot["agents"])
                 actors.sort(key=lambda a: a["id"] != current.get("secretaryAgentId"))
-            history = [{"role": "user" if m["speakerId"] == "commander" else "assistant", "content": ("系统背景：协作成果摘要，非新指令。\n" + str(m.get("metadata", {}).get("summary", m["body"]))) if m.get("type") == "task_notice" else m["body"]}
+            names = {a['id']: a['name'] for a in snapshot['agents']}
+            history = [{"role": "user" if m["speakerId"] == "commander" else "assistant", "content": ("系统背景：协作成果摘要，非新指令。\n" + str(m.get("metadata", {}).get("summary", m["body"]))) if m.get("type") == "task_notice" else ((names.get(m['speakerId'], '用户') + '：' if conversation.kind == 'group' else '') + m["body"])}
                 for m in snapshot["messages"].get(cid, [])[-40:]
                 if (conversation.kind != "dm" or m["speakerId"] == "commander" or m["speakerId"] in member_ids)
                 and (not coordinator.expression.enabled or m['speakerId'] == 'commander' or m.get('metadata',{}).get('expression'))]
@@ -243,7 +249,7 @@ def install_run_api(app, service, settings):
             run = await coordinator.admit(payload, actors, current, history, start_now=False)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        if run["collaborative"] and not run.get("teamConversationId"):
+        if run["collaborative"] and run['mode'] != 'chat' and not run.get("teamConversationId"):
             team_id = run["id"] + "-team"
             with session_scope() as session:
                 if session.get(Conversation, team_id) is None:

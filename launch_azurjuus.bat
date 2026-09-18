@@ -5,9 +5,5 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" -X utf8 desktop.py
-if errorlevel 1 (
-  echo.
-  echo AzurJuus desktop failed to start.
-  pause
-)
+start "" ".venv\Scripts\pythonw.exe" -X utf8 tools\desktop_entry.py
+exit /b
