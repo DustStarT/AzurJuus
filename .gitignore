@@ -11,3 +11,7 @@ __pycache__/
 .env
 *.pyc
 .pytest-tmp/
+
+# 本地说明文档与验收产物：仅本地保留，不纳入版本控制
+docs/
+validation/
