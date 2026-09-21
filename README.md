@@ -2,10 +2,6 @@
 
 # AzurJuus
 
-2026-09-21：新增成员可后台补查 Wiki 关系，设置提供可点击的关系图；原作资料、用户覆盖和实际合作经历分开保存。入口、调用链、验证与限制见 [动态关系资料说明](docs/RELATIONSHIP_RESEARCH_20260921.md)。
-
-`deepseek-flash` 的图片闲聊与图片任务已通过真实调用验证；在设置中启用图片输入即可使用，见[视觉接入说明](docs/VISION_DEEPSEEK_20260921.md)。
-
 本地运行的 Agent 桌面应用
 
 <img src="screenshot.png" alt="AzurJuus 主界面" width="880">
