@@ -128,8 +128,22 @@ class AzurJuusService:
     def ensure_seed(self, session: Session) -> None:
         workspace = self.get_workspace(session)
         self.get_or_create_user(session)
+        existing = session.scalars(select(Actor).where(Actor.kind == 'agent')).all()
+        roster_names = {n.strip() for n in workspace.character_roster_text.splitlines() if n.strip()}
+        excluded = []
+        for actor in existing:
+            if (actor.source_character or actor.name) not in roster_names:
+                actor.is_active = False
+                excluded.append(actor.id)
+        if excluded:
+            workspace.connected_agent_ids = [aid for aid in (workspace.connected_agent_ids or []) if aid not in excluded]
+            if workspace.secretary_agent_id in excluded:
+                workspace.secretary_agent_id = ''
+            for member in session.scalars(select(ConversationMember).where(ConversationMember.actor_id.in_(excluded))).all():
+                member.is_active = False
+            session.flush()
         has_agent = session.scalar(select(Actor).where(Actor.kind == "agent", Actor.is_active.is_(True)).limit(1))
-        if has_agent is None:
+        if has_agent is None and not existing:
             personas, missing = resolve_personas(DEFAULT_CHARACTERS)
             if missing:
                 raise RuntimeError(f"Missing default personas: {', '.join(missing)}")
@@ -137,6 +151,13 @@ class AzurJuusService:
         else:
             for agent in session.scalars(select(Actor).where(Actor.kind == "agent", Actor.is_active.is_(True))).all():
                 self._ensure_actor_signature_skill(session, agent)
+                from .relationship_research import RESEARCH_VERSION
+                research=(agent.extra_json or {}).get('wikiResearch',{})
+                if research.get('version')!=RESEARCH_VERSION:
+                    import time
+                    agent.extra_json={**(agent.extra_json or {}),'wikiResearch':{'version':RESEARCH_VERSION,
+                        'status':'pending','progress':5,'message':'等待补查官方剧情资料',
+                        'queuedAt':time.time(),'sourceUrls':research.get('sourceUrls',[])}}
         if not workspace.secretary_agent_id:
             first_agent = session.scalar(
                 select(Actor).where(Actor.kind == "agent", Actor.is_active.is_(True)).order_by(Actor.name.asc())
@@ -208,17 +229,8 @@ class AzurJuusService:
 
 
     def list_active_agents(self, session: Session, workspace: WorkspaceSetting | None = None) -> list[Actor]:
-        workspace = workspace or self.get_workspace(session)
-        active_agent_ids = list(workspace.connected_agent_ids or [])
-        if not active_agent_ids:
-            seeded_agents = session.scalars(
-                select(Actor).where(Actor.kind == "agent", Actor.is_active.is_(True)).order_by(Actor.name.asc())
-            ).all()
-
-            active_agent_ids = [agent.id for agent in seeded_agents[: workspace.max_connected_agents]]
-        if not active_agent_ids:
-            return []
-        return session.scalars(select(Actor).where(Actor.id.in_(active_agent_ids)).order_by(Actor.name.asc())).all()
+        from .character_identity import roster_actors
+        return sorted(roster_actors(session),key=lambda a:a.name)
 
     def _workspace_settings_extras(self, workspace: WorkspaceSetting) -> dict[str, Any]:
         ui_payload = dict(workspace.ui_session_json or {})
@@ -348,18 +360,13 @@ class AzurJuusService:
     def build_snapshot(self, session: Session) -> dict[str, Any]:
         workspace = self.get_workspace(session)
         user = self.get_or_create_user(session)
-        active_agent_ids = list(workspace.connected_agent_ids or [])
-        if not active_agent_ids:
-            active_agents = session.scalars(
-                select(Actor).where(Actor.kind == "agent", Actor.is_active.is_(True)).order_by(Actor.name.asc())
-            ).all()
-            active_agent_ids = [agent.id for agent in active_agents[: workspace.max_connected_agents]]
-        agents = (
-            session.scalars(select(Actor).where(Actor.id.in_(active_agent_ids)).order_by(Actor.name.asc())).all()
-            if active_agent_ids
-            else []
-        )
-        allowed_ids = {user.id, *active_agent_ids}
+        from .character_identity import roster_actors
+        agents=sorted(roster_actors(session),key=lambda a:a.name)
+        active_agent_ids=[a.id for a in agents]
+        allowed_ids={user.id,*active_agent_ids}
+        from .character_identity import references_hidden
+        hidden=set(session.scalars(select(Actor.id).where(Actor.kind=='agent')).all())-set(active_agent_ids)
+        def shown(items):return [item for item in items if not references_hidden(item,hidden)]
 
         conversations = []
         for conversation in session.scalars(select(Conversation).order_by(Conversation.updated_at.desc())).all():
@@ -367,7 +374,7 @@ class AzurJuusService:
                 select(ConversationMember).where(ConversationMember.conversation_id == conversation.id)
             ).all()
             member_ids = [member.actor_id for member in members if member.is_active]
-            if not member_ids or any(member_id not in allowed_ids for member_id in member_ids):
+            if not any(member_id in active_agent_ids for member_id in member_ids) or any(member_id not in allowed_ids for member_id in member_ids):
                 continue
             conversations.append((conversation, members))
 
@@ -378,6 +385,8 @@ class AzurJuusService:
             if active_agent_ids
             else []
         )
+        from .idle_social import MOMENTS_ENABLED
+        if not MOMENTS_ENABLED:posts=[]
         skill_rows = (
             session.scalars(select(ActorSkill).where(ActorSkill.actor_id.in_(active_agent_ids)).order_by(ActorSkill.updated_at.desc())).all()
             if active_agent_ids
@@ -406,18 +415,19 @@ class AzurJuusService:
                 conversation.id: [
                     self.serialize_message(message)
                     for message in session.scalars(
-                        select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at.asc())
+                        select(Message).where(Message.conversation_id == conversation.id,Message.speaker_id.in_(allowed_ids)).order_by(Message.created_at.asc())
                     ).all()
                 ]
                 for conversation, _members in conversations
             },
-            "posts": [self.serialize_post(session, post) for post in posts],
-            "workflows": [self.serialize_workflow(session, workflow) for workflow in workflows],
-            "approvals": [self.serialize_approval(approval) for approval in approvals],
-            "toolExecutions": [self.serialize_tool_execution(execution) for execution in tool_logs],
+            "posts": [self.serialize_post(session, post) for post in posts
+                if not any(post.author_id == a.id and post.excerpt == preview_text(' '.join((a.summary or a.persona or '').split()), 96) for a in agents)],
+            "workflows": shown([self.serialize_workflow(session, workflow) for workflow in workflows]),
+            "approvals": shown([self.serialize_approval(approval) for approval in approvals]),
+            "toolExecutions": shown([self.serialize_tool_execution(execution) for execution in tool_logs]),
             "skillCatalog": self.effective_skill_catalog(session),
-            "skillRuns": [self.serialize_skill_run(skill_run) for skill_run in skill_runs],
-            "skillProposals": [self.serialize_skill_proposal(skill_proposal) for skill_proposal in skill_proposals],
+            "skillRuns": shown([self.serialize_skill_run(skill_run) for skill_run in skill_runs]),
+            "skillProposals": shown([self.serialize_skill_proposal(skill_proposal) for skill_proposal in skill_proposals]),
             "roster": {
                 "generatedAt": isoformat(now_utc()),
                 "names": [agent.source_character or agent.name for agent in agents],
@@ -430,6 +440,7 @@ class AzurJuusService:
         return {
             "id": actor.id,
             "sourceCharacter": actor.source_character,
+            "socialOnly": bool((actor.extra_json or {}).get('socialOnly')),
             "name": actor.name,
             "handle": actor.handle,
             "englishName": actor.english_name,
@@ -448,6 +459,7 @@ class AzurJuusService:
             "avatarUrl": actor.avatar_url,
             "illustrationUrl": actor.illustration_url,
             "systemPrompt": actor.system_prompt,
+            "sourceMaterials": (actor.extra_json or {}).get('sourceMaterials', []),
             "characterUrl": actor.character_url,
             "skills": visible_skills,
             "juusAccount": {
@@ -492,6 +504,8 @@ class AzurJuusService:
         }
 
     def serialize_post(self, session: Session, post: SocialPost) -> dict[str, Any]:
+        from .character_identity import roster_actors
+        allowed_ids={'commander',*(a.id for a in roster_actors(session))}
         comments = session.scalars(
             select(SocialComment).where(SocialComment.post_id == post.id).order_by(SocialComment.created_at.asc())
         ).all()
@@ -507,7 +521,7 @@ class AzurJuusService:
             "artPalette": list(post.art_palette or []),
             "mediaUrl": post.media_url,
             "following": post.following,
-            "comments": [self.serialize_comment(comment) for comment in comments],
+            "comments": [self.serialize_comment(comment) for comment in comments if comment.author_id in allowed_ids],
         }
 
     def serialize_comment(self, comment: SocialComment) -> dict[str, Any]:
@@ -799,8 +813,8 @@ class AzurJuusService:
         }
 
     def preview_personas(self, session: Session, names: list[str], participant_count: int) -> dict[str, Any]:
-        if participant_count < 5 or participant_count > 10:
-            raise ValueError("Participant count must be between 5 and 10.")
+        if participant_count < 1 or participant_count > 24:
+            raise ValueError("角色数量需要在 1–24 人之间。")
         cleaned = [str(item).strip() for item in names if str(item).strip()]
         if len(cleaned) != participant_count:
             raise ValueError(f"Expected {participant_count} character names, but received {len(cleaned)}.")
@@ -828,6 +842,14 @@ class AzurJuusService:
             source_name = spec.get("sourceName") or spec.get("displayName")
             agent = by_source.get(source_name)
             is_new = agent is None
+            if agent is not None:
+                # Reconnecting does not replace user persona, artwork or state.
+                if spec.get('sourceMaterials'):
+                    agent.extra_json={**(agent.extra_json or {}),'sourceMaterials':spec['sourceMaterials']}
+                agent.is_active = True
+                session.add(agent)
+                active_ids.append(agent.id)
+                continue
             if agent is None:
                 agent = Actor(id=f"juus-{slugify(source_name)}", kind="agent", handle=spec.get("handle") or f"@{slugify(source_name)}.juus")
             agent.source_character = source_name
@@ -850,6 +872,19 @@ class AzurJuusService:
             agent.system_prompt = spec.get("promptSeed") or agent.system_prompt
             agent.character_url = spec.get("characterUrl") or agent.character_url
             agent.extra_json = {"aliases": spec.get("aliases") or [], "voiceSamples": spec.get("voiceSamples") or {}}
+            if spec.get('sourceMaterials'):
+                agent.extra_json['sourceMaterials']=spec['sourceMaterials']
+            # The expanded social roster has the same boundary through the old
+            # settings importer as through the additive character directory.
+            if source_name in {'阿贺野', '武藏', '英王乔治五世', '约克公爵', '贾维斯', '标枪', '七省'}:
+                from .terminal_characters import card, render, TERMINAL
+                base = card(source_name)
+                agent.persona = agent.tone = agent.summary = base['style']
+                agent.system_prompt = TERMINAL + render(base)
+                agent.tools = []
+                agent.capabilities = []
+                agent.extra_json = {'aliases': spec.get('aliases') or [], 'socialOnly': True,
+                    'terminalCard': {'version': base['version'], 'text': render(base)}}
             agent.is_active = True
             session.add(agent)
             session.flush()
@@ -1134,19 +1169,12 @@ class AzurJuusService:
                 self._append_message(session, hub, agent.id, "text", f"{agent.name} 已加入港区协作频道。")
 
     def _ensure_greeting_post(self, session: Session, agent: Actor) -> None:
-        existing = session.scalar(select(SocialPost).where(SocialPost.author_id == agent.id).limit(1))
-        if existing is not None:
-            return
-        self._create_social_post(
-            session,
-            author=agent,
-            body=agent.summary or agent.persona or f"{agent.name} 已接入 AzurJuus。",
-            media_url=agent.illustration_url or agent.avatar_url,
-            likes=200,
-        )
+        # Connecting an account is not a personal post or a social experience.
+        return
 
     def _sync_relationships(self, session: Session, agents: list[Actor]) -> None:
         for agent in agents:
+            changed=False
             for peer in agents:
                 if agent.id == peer.id:
                     continue
@@ -1157,6 +1185,7 @@ class AzurJuusService:
                     )
                 )
                 if existing is None:
+                    changed=True
                     session.add(
                         AgentRelationship(
                             id=f"rel-{slugify(agent.id)}-{slugify(peer.id)}",
@@ -1168,6 +1197,11 @@ class AzurJuusService:
                             notes_json={},
                         )
                     )
+            if changed:
+                import time
+                from .relationship_research import RESEARCH_VERSION
+                agent.extra_json={**(agent.extra_json or {}),'wikiResearch':{'version':RESEARCH_VERSION,'status':'pending','progress':5,
+                    'message':'已加入后台资料队列','queuedAt':time.time(),'sourceUrls':[]}}
 
     def _actor_skill_rows(self, session: Session, actor_id: str) -> list[ActorSkill]:
         return session.scalars(
@@ -1390,7 +1424,7 @@ class AzurJuusService:
     ) -> SocialPost:
         content = " ".join(str(body or "").split())
         if not content:
-            content = author.summary or author.persona or f"{author.name} 记录了一条新的动态。"
+            raise ValueError('动态内容不能为空。')
         post = SocialPost(
             id=f"post-{uuid4().hex[:12]}",
             author_id=author.id,

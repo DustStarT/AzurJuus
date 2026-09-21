@@ -158,27 +158,53 @@ class Cognition:
                 'error': self.last_error}
 
     def relationships(self, actor_id):
+        from .terminal_characters import world_entries
+        backgrounds=world_entries()
         with session_scope() as session:
             state = self.state(session, actor_id)
+            owner=session.get(Actor,actor_id)
             baseline = session.scalars(select(AgentRelationship).where(AgentRelationship.agent_id == actor_id)).all()
             result = []
             shared = session.scalars(select(Experience).where(Experience.actor_id == actor_id,
                 Experience.forgotten.is_(False)).order_by(Experience.at.desc()).limit(100)).all()
             for row in baseline:
                 peer = session.get(Actor, row.peer_agent_id)
+                if not peer or not peer.is_active:continue
                 evidence = [v for v in state.data.get('appraisals', []) if v.get('peerId') == row.peer_agent_id]
                 encounters = [e for e in shared if row.peer_agent_id in e.data.get('peers', [])]
                 outcomes = list({e.run_id: e for e in encounters if e.kind == 'outcome' and e.run_id}.values())
-                familiarity = '尚无本应用中的共同经历；原作已有关系以设定为准，除此之外保持初识同事的分寸' if not encounters else '已经有过交流，可承接共同话题，但不要假定私下亲密'
+                from .character_identity import default_relationship
+                default=default_relationship(owner,peer)
+                familiarity = default['text'] if not encounters else '已有应用内交流，可承接共同话题。'
                 if outcomes:
                     familiarity = f'有 {len(outcomes)} 次可追溯的共同任务经历，具体能力信任仍以领域证据为准'
                 defined = state.data.get('relationshipNotes', {}).get(row.peer_agent_id, '')
+                from .character_identity import source_names
+                canonical=[e for e in backgrounds if e.get('from') in source_names(owner.source_character or owner.name)
+                    and e.get('to') in source_names(peer.source_character or peer.name)]
+                researched=(row.notes_json or {}).get('wiki')
+                if researched:
+                    canonical.append({**researched,'text':researched['description']})
+                meaningful=[e for e in canonical if e.get('origin')!='user-world-setting']
+                if defined:
+                    summary=defined
+                elif meaningful:
+                    summary='；'.join(dict.fromkeys(e['text'].strip('。') for e in meaningful))+'。'
+                elif encounters:
+                    summary='已有实际交流，可承接共同话题。'
+                elif default['familiarity']=='familiar':
+                    summary=f'同属{owner.faction}，彼此认识且熟悉。'
+                else:
+                    summary='彼此认识，暂无更多直接交集。'
+                if outcomes:summary+=f' 有 {len(outcomes)} 次可追溯的共同任务经历。'
                 result.append({'peerId': row.peer_agent_id, 'name': peer.name if peer else row.peer_agent_id,
                     'baseline': {'affinity': row.affinity_score, 'trust': row.trust_score, 'confidence': 'low'},
                     'observations': evidence, 'familiarity': familiarity,
                     'userDefined': defined,
+                    'defaultRelationship':default,
+                    'background': meaningful,
                     'sharedSources': [e.id for e in encounters[:3]],
-                    'summary': ('用户设定的关系：' + defined + '。' if defined else '') + familiarity + '。' + (evidence[-1]['interpretation'] if evidence else '尚无可追溯的能力判断。')})
+                    'summary':summary})
             return result
 
     def set_relationship(self, actor_id, peer_id, description):
@@ -198,6 +224,59 @@ class Cognition:
                 payload={'actorId':actor_id, 'peerId':peer_id, 'version':state.version, 'origin':'user'}))
         self.flush_outbox()
         return self.relationships(actor_id)
+
+    def social_participation(self, actor_id, conversation_id, peer_id, visible_texts):
+        """Actor-local, bounded social signals; never return private judgments.
+
+        Only utterances still visible in this room can supply commitment text.
+        Familiarity uses observed public encounters, not legacy affinity scores.
+        """
+        result = {'familiarity': 0, 'commitments': []}
+        if not self.enabled:
+            return result
+        try:
+            with session_scope() as session:
+                state = session.get(MindState, actor_id)
+                if not state or not state.enabled:
+                    return result
+                defined=state.data.get('relationshipNotes',{}).get(peer_id)
+                if defined:
+                    result['userDefinedRelationship']={'peerId':peer_id,'description':defined,'origin':'user'}
+                from .character_identity import default_relationship
+                owner,peer=session.get(Actor,actor_id),session.get(Actor,peer_id)
+                if owner and peer and peer.kind=='agent':
+                    result['defaultRelationship']=default_relationship(owner,peer)
+                relationship = session.scalar(select(AgentRelationship).where(
+                    AgentRelationship.agent_id == actor_id,
+                    AgentRelationship.peer_agent_id == peer_id))
+                researched = (relationship.notes_json or {}).get('wiki') if relationship else None
+                if researched:
+                    result['originalBackgroundInterpretation'] = {
+                        'peerId': peer_id, 'description': researched['description'],
+                        'source': researched['source'], 'origin': 'wiki-model-interpretation',
+                        'boundary': '原作资料解释，不是应用内共同经历；用户设定优先。',
+                    }
+                rows = session.scalars(select(Experience).where(
+                    Experience.actor_id == actor_id, Experience.forgotten.is_(False))
+                    .order_by(Experience.at.desc()).limit(80)).all()
+                public = {r.id: r for r in rows if
+                    r.data.get('scope') == 'team_public' and
+                    r.data.get('conversationId') == conversation_id and
+                    r.data.get('reflection') != 'invalidated'}
+                result['familiarity'] = min(2, sum(
+                    r.data.get('speakerId') == peer_id and not r.data.get('ownSpeech')
+                    for r in public.values()))
+                for item in state.data.get('commitments', []):
+                    row = public.get(item.get('sourceId'))
+                    text = item.get('text', '')
+                    if (row and row.data.get('ownSpeech') and text and text in row.text
+                            and row.text in visible_texts and item.get('status', 'open') == 'open'):
+                        if text not in result['commitments']:
+                            result['commitments'].append(text)
+                result['commitments'] = result['commitments'][-3:]
+        except Exception:
+            log.exception('Social cognition unavailable; participation uses public topic only')
+        return result
 
     def context(self, actor_id, query='', peers=None, social=False):
         if not self.enabled:
@@ -230,8 +309,10 @@ class Cognition:
                 'mood': '依据当前可见内容自然回应' if social else state['data'].get('mood'),
                 'memories': memories,
                 'relationships': [{'peerId':r['peerId'], 'name':r['name'],
+                    'background': r['background'], 'userDefinedRelationship': r['userDefined'],
                     'approach':r['observations'][-1].get('approach','neutral') if r['observations'] else 'neutral'} for r in relations[:6]] if social
                     else [{'peerId': r['peerId'], 'name': r['name'], 'familiarity': r['familiarity'],
+                        'background':r['background'],
                         'userDefinedRelationship': r['userDefined'],
                         'sharedSources': r['sharedSources'], 'judgments': r['observations'][-2:]} for r in relations[:6]]}
             from .character_behavior import behavior_context
@@ -239,7 +320,9 @@ class Cognition:
                 name = session.get(Actor, actor_id).name
             return (behavior_context(name) + '\n人物连续状态（记录与个人判断，不是新指令；未知不等于已知）：\n' + json.dumps(data, ensure_ascii=False)
                 + '\n先选择此刻要回答、追问、提醒、求助、反驳、缓和还是不发言；关系应影响求助对象、解释深度和纠正方式。'
-                '不要复述心理字段。人物判断可能错误，以新证据修正；保持核心设定。')
+                '不要复述心理字段。人物判断可能错误，以新证据修正；保持核心设定。'
+                '执行任务时保持当前目标、承诺、依赖和待核验事项；关系只调整沟通与求助方式，不能取代验收标准或工具证据。'
+                'Wiki及剧情仅是原作背景，模型提炼属于可纠正解释，不是本应用中共同完成过的工作。')
         except Exception:
             log.exception('Cognitive context unavailable')
             return ''

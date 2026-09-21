@@ -118,7 +118,7 @@ def canonical_name_from_url(url: str) -> str | None:
 def fetch_page(url: str) -> tuple[BeautifulSoup, str]:
     response = requests.get(url, headers=HEADERS, timeout=20)
     response.raise_for_status()
-    response.encoding = response.apparent_encoding or response.encoding or "utf-8"
+    response.encoding = "utf-8"
     return BeautifulSoup(response.text, "html.parser"), response.url
 
 
@@ -687,6 +687,7 @@ def build_runtime_persona(profile: CharacterProfile) -> dict:
 
 
 def resolve_personas(names: list[str], refresh: bool = False) -> tuple[list[dict], list[str]]:
+    from backend.character_identity import source_names
     personas: list[dict] = []
     missing: list[str] = []
     for name in names:
@@ -695,7 +696,18 @@ def resolve_personas(names: list[str], refresh: bool = False) -> tuple[list[dict
         except Exception:
             missing.append(name)
             continue
-        personas.append(build_runtime_persona(profile))
+        spec=build_runtime_persona(profile)
+        if len(source_names(name))>1:
+            materials=[]
+            for source_name in source_names(name):
+                try:
+                    source=profile if source_name==name else resolve_profile(source_name,refresh=refresh)
+                except Exception:
+                    missing.append(source_name)
+                    continue
+                materials.append({'name':source_name,'source':source.url,'text':build_runtime_persona(source)['promptSeed'][:6000]})
+            spec['sourceMaterials']=materials
+        personas.append(spec)
     return personas, missing
 
 

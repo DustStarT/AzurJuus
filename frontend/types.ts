@@ -1,6 +1,7 @@
 export interface Agent {
   id: string;
   name: string;
+  sourceCharacter?: string;
   handle: string;
   faction: string;
   initials: string;
@@ -30,7 +31,7 @@ export interface Message {
   body: string;
   type: string;
   createdAt: string;
-  metadata?: { runId?: string; expression?: boolean; segments?: string[]; sourceIds?: string[] };
+  metadata?: { runId?: string; expression?: boolean; segments?: string[]; sourceIds?: string[]; attachments?:{id:string;name:string;mime:string;conversationId:string}[] };
 }
 export interface Post {
   id: string;
@@ -91,6 +92,7 @@ export interface ToolCall {
   approval?: string;
 }
 export interface Settings {
+  maxConnectedAgents?: number;
   llmModel: string;
   llmBaseUrl: string;
   llmProvider: string;

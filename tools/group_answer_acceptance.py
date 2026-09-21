@@ -58,6 +58,7 @@ def main():
         data=get('/api/workspace/load')['workspace']['data']
         group,messages,seconds=run('port-hub','你好，各位。','chat')
         report['group']={'status':group['status'],'speakers':len({m['speakerId'] for m in messages}),
+            'expectedSpeakers':len(group['actors']),'errors':group.get('groupChatErrors',[]),
             'messages':[m['body'] for m in messages],'seconds':seconds}
         assert report['group']['speakers']>1,report['group']
         cid=next(c['id'] for c in data['conversations'] if c['kind']=='dm')

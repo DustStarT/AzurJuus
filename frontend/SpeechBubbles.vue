@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { enqueueSpeech, liveSpeechIds } from './speechQueue';
-const props = defineProps<{ text: string; streaming?: boolean; single?: boolean; self?: boolean; messageId?:string; conversationId?:string }>();
+const props = defineProps<{ text: string; streaming?: boolean; single?: boolean; self?: boolean; messageId?:string; conversationId?:string; officialStickers?:boolean }>();
 const emit = defineEmits<{ reveal: [] }>();
+const stickers:Record<string,string>={赞同:'👍',疑惑:'🤔',开心:'😄',困倦:'😴'};
+function pieces(text:string){return text.split(/(\[表情:(?:赞同|疑惑|开心|困倦|标枪疑惑)\])/g).filter(Boolean).map(t=>({text:t,sticker:t.match(/^\[表情:(.+)\]$/)?.[1]}));}
 // History is immediate; live output commits complete sentences without final flush.
 const fresh = !!props.messageId && liveSpeechIds.delete(props.messageId);
 const queued = fresh && props.text.length <= 180 && !props.single;
@@ -11,8 +13,10 @@ let release: (()=>void) | undefined;
 let waiting = queued;
 const shown = ref<{ text: string; bubble: number }[]>([]);
 let timer: ReturnType<typeof setTimeout> | undefined;
+let wasStreaming = !!props.streaming;
 function sentences() {
   if (props.single) return [{ text: props.text, bubble: 0 }];
+  if (!wasStreaming && !props.streaming) return props.text.split(/\n\n+/).filter(s => s.trim()).map((text,bubble) => ({text,bubble}));
   const result: { text: string; bubble: number }[] = [];
   let start = 0, bubble = 0, fenced = false;
   for (let i = 0; i < props.text.length; i++) {
@@ -41,13 +45,13 @@ function advance() {
     shown.value.push(next);
     emit('reveal');
     const pace = localStorage.getItem('azur-speech-pace') || 'natural';
-    timer = setTimeout(advance, pace === 'instant' ? 0 : Math.min(pace === 'calm' ? 1400 : 1000, Math.max(450, next.text.length * (pace === 'calm' ? 35 : 24))));
+    timer = setTimeout(advance, pace === 'instant' ? 0 : Math.min(1200, Math.max(450, next.text.length * (pace === 'calm' ? 35 : 24))));
   } else if (!props.streaming) {
     release?.();
   }
 }
 watch(() => [props.text, props.streaming], () => {
-  if (props.streaming) live.value = true;
+  if (props.streaming) { wasStreaming = true; live.value = true; }
   if (!timer) advance();
 }, { immediate: true });
 if (queued) release = enqueueSpeech(props.conversationId || 'chat', done => { release = done; waiting = false; advance(); });
@@ -66,7 +70,7 @@ onBeforeUnmount(() => { clearTimeout(timer); release?.(); });
 <template>
   <div class="speech-stack" :class="{ 'speech-stack--self': self }" :aria-busy="streaming || shown.length < readyParts.length || undefined">
     <div v-for="bubble in bubbles" :key="bubble.id" class="message-bubble" :class="{ 'speech-enter': live }">
-      <span v-for="part in bubble.parts" :key="part.id" :class="{ 'sentence-enter': live }">{{ part.text }}</span>
+      <span v-for="part in bubble.parts" :key="part.id" :class="{ 'sentence-enter': live }"><template v-for="(piece,index) in pieces(part.text)" :key="index"><picture v-if="piece.sticker==='标枪疑惑' && officialStickers" class="official-sticker"><source media="(prefers-reduced-motion: reduce)" srcset="/resources/ui/javelin.png"><img class="animated" src="/resources/ui/javelin.gif" alt="标枪疑惑"><img class="still" src="/resources/ui/javelin.png" alt="标枪疑惑"></picture><span v-else-if="piece.sticker" class="sticker" role="img" :aria-label="piece.sticker==='标枪疑惑'?'疑惑':piece.sticker">{{stickers[piece.sticker]||stickers['疑惑']}}</span><template v-else>{{piece.text}}</template></template></span>
     </div>
     <span v-if="streaming && !bubbles.length" class="speech-wait" aria-label="正在组织回复">···</span>
     <button v-if="!streaming && shown.length < readyParts.length" class="text-button" @click="revealAll">立即显示</button>
@@ -74,6 +78,8 @@ onBeforeUnmount(() => { clearTimeout(timer); release?.(); });
 </template>
 <style scoped>
 .speech-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.sticker { display:inline-block;font-size:48px;line-height:1.3;padding:4px 12px; }
+.official-sticker img{width:110px;height:110px;object-fit:contain}.official-sticker .still{display:none}:global(.reduced-motion) .official-sticker .animated{display:none}:global(.reduced-motion) .official-sticker .still{display:block}
 .speech-stack .message-bubble { max-width: min(100%, 36em); overflow-wrap: anywhere; }
 .speech-stack--self { align-items: flex-end; }
 .speech-enter { animation: speech-in 180ms ease-out both; transform-origin: left bottom; }

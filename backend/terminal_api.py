@@ -33,7 +33,7 @@ def install_terminal_api(app, coordinator):
 
     @app.get('/api/worldbook')
     async def worldbook():
-        return {'entries':cards.world_entries(), 'version':cards.VERSION}
+        return {'entries':cards.world_entries(), 'version':cards.worldbook()['version']}
 
     @app.get('/api/actors/{actor_id}/prompt-preview')
     async def preview(actor_id: str):

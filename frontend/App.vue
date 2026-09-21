@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { api, useWorkspace } from "./api";
-import type { Agent, Conversation, Post, Run } from "./types";
+import type { Agent, Conversation, Run } from "./types";
 import Icon from "./Icon.vue";
 import Avatar from "./Avatar.vue";
 import { artworkUrl } from './assets';
@@ -10,9 +10,13 @@ import SpeechBubbles from "./SpeechBubbles.vue";
 import { liveSpeechIds } from './speechQueue';
 import MethodPanel from "./MethodPanel.vue";
 import SettingsPanel from "./SettingsPanel.vue";
+import AttachmentPicker from './AttachmentPicker.vue';
+import SocialControls from "./SocialControls.vue";
+import CreateGroup from './CreateGroup.vue';
 const { workspace, runs, online, error, streams, refresh, start, stop } =
   useWorkspace();
 const methodActor = ref<Agent>();
+const attachmentIds = ref<string[]>([]);
 const view = ref("chat"),
   activeId = ref(""),
   postId = ref(""),
@@ -27,10 +31,7 @@ const draft = ref(""),
   mode = ref("chat"),
   sending = ref(false),
   composing = ref(false),
-  notice = ref(""),
-  comment = ref(""),
-  postDraft = ref(""),
-  publishing = ref(false);
+  notice = ref("");
 const scroller = ref<HTMLElement>(),
   pageSize = ref(100),
   atBottom = ref(true),
@@ -38,6 +39,13 @@ const scroller = ref<HTMLElement>(),
 const data = computed(() => workspace.value?.data);
 const userId = computed(() => data.value?.user.id || 'commander');
 const agents = computed(() => data.value?.agents || []);
+const mentionQuery = computed(() => draft.value.match(/(?:^|\s)@([^\s@]*)$/)?.[1]);
+const mentionOptions = computed(() => composing.value || mentionQuery.value === undefined || conversation.value?.kind !== 'group'
+  ? [] : agents.value.filter(a => a.name.includes(mentionQuery.value!)).slice(0, 8));
+function insertMention(name: string) {
+  draft.value = draft.value.replace(/@[^\s@]*$/, `@${name} `);
+  nextTick(() => document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus());
+}
 const agentMap = computed(() =>
   Object.fromEntries(
     [...agents.value, ...(data.value ? [data.value.user] : [])].map((a) => [
@@ -111,8 +119,6 @@ const activeStreams = computed(() =>
     activeRuns.value.some((r) => key.startsWith(r.id + ":")),
   ),
 );
-const posts = computed(() => data.value?.posts || []);
-const post = computed(() => posts.value.find((p) => p.id === postId.value));
 const statuses: Record<string, string> = {
   queued: "已接收",
   running: "正在执行",
@@ -247,12 +253,16 @@ async function send() {
       {
         conversationId: activeId.value,
         content,
+        attachments: attachmentIds.value,
+        mentions: conversation.value.kind === 'group'
+          ? agents.value.filter(a => content.includes(`@${a.name}`)).map(a => a.id) : [],
         mode: mode.value === "chat" ? "chat" : "task",
         collaborative: mode.value === "swarm",
         requestId: crypto.randomUUID(),
       },
     );
     draft.value = "";
+    attachmentIds.value = [];
     activeId.value = result.conversationId;
     selectedRunId.value = result.runId;
     await refresh();
@@ -266,45 +276,14 @@ async function send() {
   }
 }
 function keydown(e: KeyboardEvent) {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !composing.value && mentionOptions.value.length) {
+    e.preventDefault();
+    insertMention(mentionOptions.value[0].name);
+    return;
+  }
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !composing.value) {
     e.preventDefault();
     void send();
-  }
-}
-async function like(p: Post) {
-  try {
-    await api("/api/posts/like", { postId: p.id });
-    await refresh();
-  } catch (e) {
-    notice.value = (e as Error).message;
-  }
-}
-async function addComment() {
-  if (!post.value || !comment.value.trim()) return;
-  try {
-    await api("/api/posts/comment", {
-      postId: post.value.id,
-      body: comment.value,
-    });
-    comment.value = "";
-    await refresh();
-  } catch (e) {
-    notice.value = (e as Error).message;
-  }
-}
-async function publish() {
-  if (!postDraft.value.trim()) return;
-  try {
-    await api("/api/posts/publish", {
-      body: postDraft.value,
-      authorId:
-        workspace.value?.settings.secretaryAgentId || agents.value[0]?.id,
-    });
-    postDraft.value = "";
-    publishing.value = false;
-    await refresh();
-  } catch (e) {
-    notice.value = (e as Error).message;
   }
 }
 async function changeRole(id: string, role: string) {
@@ -324,7 +303,6 @@ function globalKey(e: KeyboardEvent) {
     showSettings.value = false;
     showWork.value = false;
     showMembers.value = false;
-    publishing.value = false;
     showFilters.value = false;
   }
   if (e.key === "Tab") {
@@ -462,6 +440,7 @@ onUnmounted(() => {
         </div>
         <section v-show="view === 'chat'" class="chat-layout">
           <aside class="conversation-panel">
+            <CreateGroup :agents="agents" @created="async id => { await refresh(); activeId=id; mobileChat=true; }" />
             <div class="list-tools">
               <div class="search-field">
                 <Icon name="search" :size="18" /><input
@@ -506,7 +485,7 @@ onUnmounted(() => {
                 :class="{ active: c.id === activeId }"
                 @click="selectConversation(c)"
               >
-                <Avatar :agent="friend(c)" :group="c.kind === 'group'" />
+                <Avatar :agent="friend(c)" :group="c.kind === 'group'" :hub="c.id === 'port-hub'" />
                 <div class="conversation-copy">
                   <div class="conversation-title">
                     <strong>{{ c.title }}</strong
@@ -619,7 +598,8 @@ onUnmounted(() => {
                       ><time>{{ time(m.createdAt) }}</time>
                     </div>
                     <details v-if="m.type === 'task_progress' && !m.metadata?.expression"><summary>历史工作回复</summary><div class="message-bubble">{{ m.body }}</div></details>
-                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
+                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" :official-stickers="agents.some(a=>(a.sourceCharacter||a.name)==='标枪')" @reveal="speechRevealed" />
+                    <a v-for="file in m.metadata?.attachments || []" :key="file.id" :href="`/api/attachments/${file.id}?conversationId=${encodeURIComponent(file.conversationId)}`" target="_blank" rel="noreferrer">附件 · {{file.name}}</a>
                   </div>
                 </article>
                 <div
@@ -704,8 +684,11 @@ onUnmounted(() => {
               <p v-if="conversation.kind === 'dm'" class="muted">
                 {{ peer?.persona }}
               </p>
+              <SocialControls v-if="conversation.kind === 'group'" :key="conversation.id"
+                :conversation-id="conversation.id" @changed="refresh" />
             </div>
             <form class="composer" @submit.prevent="send">
+              <AttachmentPicker :conversation-id="activeId" v-model="attachmentIds" />
               <div class="composer-mode">
                 <button
                   type="button"
@@ -722,6 +705,12 @@ onUnmounted(() => {
                 >
               </div>
               <div class="composer-input">
+                <div v-if="mentionOptions.length" class="mention-options" aria-label="提及人物">
+                  <button v-for="actor in mentionOptions" :key="actor.id" type="button"
+                    @mousedown.prevent @click="insertMention(actor.name)">
+                    <span>{{ actor.name }}</span><small>{{ actor.faction }}</small>
+                  </button>
+                </div>
                 <textarea
                   v-model="draft"
                   rows="2"
@@ -761,132 +750,12 @@ onUnmounted(() => {
           </div>
         </section>
         <section v-if="view === 'circle'" class="circle-layout">
-          <header class="circle-toolbar">
-            <div>
-              <span class="eyebrow">MOMENTS AT THE PORT</span>
-              <h1>{{ post ? "这一刻的港区" : "港区日常" }}</h1>
-            </div>
-            <button
-              v-if="post"
-              class="soft-button"
-              @click="
-                postId = '';
-                saveSession();
-              "
-            >
-              <Icon name="list" />动态总览</button
-            ><button v-else class="soft-button" @click="publishing = true">
-              <Icon name="plus" />新动态
-            </button>
-          </header>
-          <div v-if="!post" class="post-list">
-            <button
-              v-for="p in posts"
-              :key="p.id"
-              class="post-card"
-              @click="
-                postId = p.id;
-                saveSession();
-              "
-            >
-              <div class="post-person">
-                <Avatar :agent="agentMap[p.authorId]" /><strong>{{
-                  agentMap[p.authorId]?.name
-                }}</strong>
-              </div>
-              <div class="post-thumb">
-                <img
-                  v-if="p.mediaUrl || agentMap[p.authorId]?.illustrationUrl"
-                  :src="p.mediaUrl || agentMap[p.authorId]?.illustrationUrl"
-                  alt="动态配图"
-                  loading="lazy"
-                /><Icon v-else name="image" :size="35" />
-              </div>
-              <div class="post-copy">
-                <p>{{ p.excerpt }}</p>
-                <small
-                  >{{ date(p.createdAt) }} ·
-                  {{ p.comments.length }} 条留言</small
-                >
-              </div>
-              <span class="post-likes" :class="{ liked: p.likedByUser }"
-                ><Icon name="heart" :size="28" /><strong>{{
-                  p.likes
-                }}</strong></span
-              ><Icon class="post-arrow" name="next" />
-            </button>
-            <div v-if="!posts.length" class="empty-state">
-              <Icon name="circle" :size="48" />
-              <h3>今天的故事，等你开启</h3>
-              <p>伙伴的动态和任务后的感想会出现在这里。</p>
-            </div>
+          <div class="empty-state">
+            <Icon name="circle" :size="56" />
+            <h2>动态功能完善中</h2>
+            <p>港区朋友圈暂时关闭。</p>
           </div>
-          <div v-else class="post-detail" :key="post.id">
-            <div class="post-art-panel">
-              <div class="post-art">
-                <img
-                  v-if="
-                    post.mediaUrl || agentMap[post.authorId]?.illustrationUrl
-                  "
-                  :src="
-                    post.mediaUrl || agentMap[post.authorId]?.illustrationUrl
-                  "
-                  alt="动态配图"
-                />
-                <div v-else class="art-placeholder">
-                  <Icon name="circle" :size="100" /><span>JUUS / MOMENT</span>
-                </div>
-              </div>
-              <div class="post-art-actions">
-                <button
-                  class="icon-button"
-                  :class="{ liked: post.likedByUser }"
-                  aria-label="点赞动态"
-                  @click="like(post)"
-                >
-                  <Icon name="heart" :size="30" /></button
-                ><Icon name="chat" :size="28" /><span
-                  >{{ post.likes }} 次赞</span
-                ><small>{{ date(post.createdAt) }}</small>
-              </div>
-            </div>
-            <div class="post-discussion">
-              <header>
-                <Avatar :agent="agentMap[post.authorId]" />
-                <div>
-                  <h2>{{ agentMap[post.authorId]?.name }}</h2>
-                  <small>{{ agentMap[post.authorId]?.handle }}</small>
-                </div>
-                <span class="following">· FOLLOWING ·</span>
-              </header>
-              <div class="comment-scroll">
-                <p class="post-description">{{ post.excerpt }}</p>
-                <div class="comments-divider">
-                  {{ post.comments.length }} 条留言
-                </div>
-                <article v-for="c in post.comments" :key="c.id" class="comment">
-                  <Avatar :agent="agentMap[c.authorId]" />
-                  <div>
-                    <strong>{{ agentMap[c.authorId]?.name }}</strong>
-                    <p>{{ c.body }}</p>
-                  </div>
-                </article>
-              </div>
-              <form class="comment-form" @submit.prevent="addComment">
-                <Avatar :agent="data?.user" /><input
-                  v-model="comment"
-                  placeholder="留下你的回应…"
-                  aria-label="动态评论"
-                /><button
-                  class="icon-button"
-                  :disabled="!comment.trim()"
-                  aria-label="发送评论"
-                >
-                  <Icon name="send" />
-                </button>
-              </form>
-            </div>
-          </div>
+
         </section>
       </template>
     </main>
@@ -908,29 +777,6 @@ onUnmounted(() => {
         @close="showSettings = false"
         @saved="refresh"
     /></Transition>
-    <div v-if="publishing" class="modal-scrim" @click.self="publishing = false">
-      <form class="publish-modal" @submit.prevent="publish">
-        <header>
-          <h2>分享港区日常</h2>
-          <button
-            type="button"
-            class="icon-button"
-            aria-label="关闭发布"
-            @click="publishing = false"
-          >
-            <Icon name="close" />
-          </button>
-        </header>
-        <p class="muted">把这份想法交给秘书，由她分享给港区伙伴。</p>
-        <textarea
-          v-model="postDraft"
-          rows="6"
-          placeholder="今天发生了什么？"
-          aria-label="动态内容"
-        /><button class="primary-button" :disabled="!postDraft.trim()">
-          <Icon name="send" />发布动态
-        </button>
-      </form>
-    </div>
+
   </div>
 </template>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { api } from "./api";
 import type { Workspace, Settings, Agent } from "./types";
 import Icon from "./Icon.vue";
 import Avatar from "./Avatar.vue";
+import TerminalConfiguration from './TerminalConfiguration.vue';
 const props = defineProps<{ workspace: Workspace }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
 const tab = ref("connection"),
@@ -14,6 +15,11 @@ const settings = ref<Settings>({
   ...props.workspace.settings,
   connectedAgentIds: [...props.workspace.settings.connectedAgentIds],
   llmApiKey: "",
+});
+watch(() => props.workspace.data.agents.map(a=>a.id).join(','), () => {
+ settings.value.connectedAgentIds=[...props.workspace.settings.connectedAgentIds];
+ settings.value.characterRosterText=props.workspace.settings.characterRosterText;
+ settings.value.maxConnectedAgents=props.workspace.settings.maxConnectedAgents;
 });
 const reduced = ref(localStorage.getItem("azur-reduced-motion") === "true");
 const speechPace = ref(localStorage.getItem('azur-speech-pace') || 'natural');
@@ -46,6 +52,7 @@ const selected = ref<Agent>(),
 const tabs = [
   { id: "connection", label: "连接与工作区", icon: "folder" },
   { id: "agents", label: "港区成员", icon: "users" },
+  { id: "world", label: "人物关系与任务", icon: "users" },
   { id: "appearance", label: "外观与动态", icon: "circle" },
   { id: "skills", label: "技能档案", icon: "sparkle" },
   { id: "personal", label: "我的资料与数据", icon: "users" },
@@ -209,7 +216,7 @@ async function connectRoster() {
               ><input
                 type="checkbox"
                 v-model="settings.visionEnabled"
-              />此模型支持图像输入，可使用截图定位</label
+              />启用图片输入与截图定位（deepseek-flash 支持）</label
             >
             <div class="section-divider"></div>
             <span class="eyebrow">02 / WORKSPACE</span>
@@ -286,12 +293,13 @@ async function connectRoster() {
               />
             </label>
             <p class="field-hint">
-              输入 5–10 位角色的名字，每行一位。历史聊天和角色资料会保留。
+              输入 1–24 位角色的名字，每行一位。历史聊天和用户修改会保留；已核实的人物背景与关系按原作身份匹配。
             </p>
             <button class="soft-button" :disabled="busy" @click="connectRoster">
               根据名单连接角色
             </button></template
           >
+          <TerminalConfiguration v-if="tab === 'world'" @changed="emit('saved')" />
           <template v-if="tab === 'appearance'"
             ><span class="eyebrow">DISPLAY & LIFE</span>
             <h3>让港区慢下来</h3>

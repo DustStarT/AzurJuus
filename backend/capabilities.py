@@ -26,6 +26,7 @@ CATALOG = {
     "restore": "Restore path from snapshotId; requires approval.",
     "undo": "Undo a copy/move using its snapshotId; verifies destination has not changed and restores overwritten destination. Requires approval.",
     "read_document": "Read PDF, DOCX or XLSX path; offset and limit page/paragraph/row units. Includes source locations.",
+    "read_image": "Inspect a local PNG/JPEG/WebP image at path using the configured vision model. Returns image pixels and source SHA256, not an invented text description. Requires vision enabled.",
     "write_document": "Write DOCX from content, or XLSX from sheets mapping sheet names to lists of rows.",
     "command": "Run argv (array, no shell interpolation) in cwd within workspace. timeout seconds default 120. Requires task command grant.",
     "browser": "Browser op: navigate(url), read, click(selector), fill(selector,value), submit(selector), download(selector,path), screenshot, tabs, select(index). Selectors are Playwright selectors. Submission/click requires approval.",
@@ -43,7 +44,7 @@ def phase_actions(phase):
     if phase == "planner":
         return ["delegate", "execution_history"]
     if phase == "reviewer":
-        return ["read_file", "read_document", "search", "list_dir", "deliver", "execution_history"]
+        return ["read_file", "read_document", "read_image", "search", "list_dir", "deliver", "execution_history"]
     return [name for name in CATALOG if name != "delegate"]
 
 
@@ -101,10 +102,16 @@ class LocalCapabilities:
             raise CapabilityError("运行时状态和凭据目录不能作为任务文件操作目标。")
         return candidate
 
+    def file_destination(self, root, args):
+        dest=self.path(root,args['dest'])
+        if dest.is_dir():
+            dest=self.path(root,str(dest/self.path(root,args['src']).name))
+        return dest
+
     def approval_reason(self, run, name, args):
         if name in {"restore", "undo"}:
             return "恢复快照将覆盖当前文件"
-        if name in {"copy", "move"} and self.path(run["workspace"], args["dest"]).exists():
+        if name in {"copy", "move"} and self.file_destination(run["workspace"],args).exists():
             return "目标文件已存在，操作将覆盖内容"
         if name == "command" and "command" not in run.get("grants", []):
             return "允许此任务执行本地程序；程序具有当前用户权限，目录限制不构成进程沙箱"
@@ -154,6 +161,24 @@ class LocalCapabilities:
         path = self.path(root, args.get("path", "."))
         offset = max(0, int(args.get("offset", 0)))
         limit = max(1, min(500, int(args.get("limit", 200))))
+        if name == 'read_image':
+            if not run.get('visionEnabled'):
+                raise CapabilityError('请先启用视觉输入。deepseek-flash 支持此功能。')
+            if path.stat().st_size > 8*1024*1024:
+                raise CapabilityError('图片不能超过8MB。')
+            from PIL import Image
+            from io import BytesIO
+            raw=path.read_bytes()
+            with Image.open(BytesIO(raw)) as im:
+                if im.format not in {'PNG','JPEG','WEBP'} or im.width*im.height>20_000_000:
+                    raise CapabilityError('图片格式不支持或尺寸过大。')
+                width,height=im.size
+                output=BytesIO()
+                im.convert('RGB').save(output,format='PNG')
+            if output.tell()>8*1024*1024:
+                raise CapabilityError('图片展开后超过8MB，请缩小后重试。')
+            return {'path':str(path),'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),
+                'width':width,'height':height,'mimeType':'image/png','image':base64.b64encode(output.getvalue()).decode('ascii')}
         if name == "list_dir":
             entries = sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
             return {"entries": [{"name": p.name, "directory": p.is_dir()} for p in entries[offset:offset + limit]], "total": len(entries), "nextOffset": offset + limit if offset + limit < len(entries) else None}
@@ -211,7 +236,7 @@ class LocalCapabilities:
             temporary.replace(path)
             return {"path": str(path), "snapshotId": sid, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}
         if name in {"copy", "move"}:
-            src, dest = self.path(root, args["src"]), self.path(root, args["dest"])
+            src, dest = self.path(root, args["src"]), self.file_destination(root,args)
             if not src.is_file() or src == dest:
                 raise CapabilityError("源文件不存在或源与目标相同。")
             sid, dest_sid = self.snapshot(src, root), self.snapshot(dest, root)

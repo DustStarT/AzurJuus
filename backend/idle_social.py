@@ -16,10 +16,14 @@ from .social_runtime import SocialCandidate
 class SocialPreempted(Exception):
     pass
 
+MOMENTS_ENABLED=False
 
-async def _generate(request, is_busy):
+
+async def _generate(request, is_busy, reserve=None):
     task = asyncio.create_task(request)
     try:
+        if reserve and not reserve():
+            raise SocialPreempted()
         while not task.done():
             if is_busy():
                 raise SocialPreempted()
@@ -35,9 +39,12 @@ async def _generate(request, is_busy):
 
 
 async def run_idle_social(service, is_busy=lambda: False):
+    if not MOMENTS_ENABLED:
+        return None
     if is_busy():
         return None
     social = service.bundle.social
+    reserve = getattr(service, 'background_budget', None)
     mind = getattr(service, 'cognition', None)
     if mind and mind.enabled:
         mind.pump()
@@ -99,10 +106,10 @@ async def run_idle_social(service, is_busy=lambda: False):
     try:
         expression = getattr(service,'expression',None)
         if expression and expression.enabled:
-            body = await _generate(expression.social(actor_payload,plan_prompt,settings),is_busy)
+            body = await _generate(expression.social(actor_payload,plan_prompt,settings,reserve=reserve),is_busy)
         else:
             body = await _generate(service.bundle.runtime.generate_social_post(settings=settings, agent=actor_payload,
-                prompt=plan_prompt, memory_snippets=memories, skill_context=selection.prompt_patch), is_busy)
+                prompt=plan_prompt, memory_snippets=memories, skill_context=selection.prompt_patch), is_busy, reserve)
         if not str(body or "").strip() or str(body).strip() == '[SKIP]':
             return None
         # Comment plans are plain snapshots, detached before any network wait.
@@ -126,9 +133,9 @@ async def run_idle_social(service, is_busy=lambda: False):
                     "prompt": prompt, "relationship_hint": hint, "skill_context": skill.prompt_patch}})
         for comment in comments:
             if expression and expression.enabled:
-                comment['body'] = await _generate(expression.social(comment['request']['agent'],comment['request']['prompt'],settings),is_busy)
+                comment['body'] = await _generate(expression.social(comment['request']['agent'],comment['request']['prompt'],settings,reserve=reserve),is_busy)
             else:
-                comment["body"] = await _generate(service.bundle.runtime.generate_social_comment(**comment["request"]), is_busy)
+                comment["body"] = await _generate(service.bundle.runtime.generate_social_comment(**comment["request"]), is_busy, reserve)
     except SocialPreempted:
         return None
 

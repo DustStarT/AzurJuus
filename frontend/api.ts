@@ -110,6 +110,9 @@ export function useWorkspace() {
             if (key.startsWith(run.id + ":")) streams[key].done = true;
           scheduleRefresh();
         }
+      } else if (event.type === 'social.message') {
+        liveSpeechIds.add(String(event.payload.messageId));
+        scheduleRefresh();
       } else if (["message.start", "message.delta", "message.complete"].includes(event.type)) {
         const p = event.payload;
         const messageId = String(p.messageId || event.runId + ":" + p.assignmentId);

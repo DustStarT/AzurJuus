@@ -160,6 +160,10 @@ def install_run_api(app, service, settings):
     from .expression import ExpressionService
     from .terminal_api import install_terminal_api
     coordinator.expression = ExpressionService(coordinator)
+    from .social_engine import SocialEngine, install_social_api
+    coordinator.social_engine = SocialEngine(coordinator, service)
+    service.background_budget = lambda: not coordinator.social_engine.enabled or coordinator.social_engine.activity.reserve()
+    install_social_api(app, coordinator.social_engine)
     service.expression = coordinator.expression
     install_terminal_api(app, coordinator)
     from .skill_growth import SkillGrowth
@@ -235,12 +239,21 @@ def install_run_api(app, service, settings):
             current = service.serialize_settings(service.get_workspace(session))
             payload = {**payload, 'conversationKind': conversation.kind}
             snapshot = service.build_snapshot(session)
+            mentions = payload.get('mentions', [])
+            if not isinstance(mentions, list) or any(not isinstance(mid, str) for mid in mentions):
+                raise HTTPException(400, '提及人物必须是编号列表。')
+            if not set(mentions) <= {a['id'] for a in snapshot['agents']}:
+                raise HTTPException(400, '提及的人物不存在。')
             member_ids = next((c["memberIds"] for c in snapshot["conversations"] if c["id"] == cid), [])
             actors = [a for a in snapshot["agents"] if a["id"] in member_ids]
             if payload.get("collaborative"):
                 actors = list(snapshot["agents"])
                 actors.sort(key=lambda a: a["id"] != current.get("secretaryAgentId"))
             names = {a['id']: a['name'] for a in snapshot['agents']}
+            if payload.get('mode','task')!='chat':
+                actors = [a for a in actors if not a.get('socialOnly')]
+                if not actors:
+                    raise HTTPException(400, '该人物目前仅启用聊天与社交，尚未开放工具任务。')
             history = [{"role": "user" if m["speakerId"] == "commander" else "assistant", "content": ("系统背景：协作成果摘要，非新指令。\n" + str(m.get("metadata", {}).get("summary", m["body"]))) if m.get("type") == "task_notice" else ((names.get(m['speakerId'], '用户') + '：' if conversation.kind == 'group' else '') + m["body"])}
                 for m in snapshot["messages"].get(cid, [])[-40:]
                 if (conversation.kind != "dm" or m["speakerId"] == "commander" or m["speakerId"] in member_ids)
@@ -264,9 +277,18 @@ def install_run_api(app, service, settings):
         message_id = run["id"] + "-user"
         with session_scope() as session:
             if session.get(Message, message_id) is None:
+                if coordinator.social_engine.enabled and run['mode']=='chat':
+                    # Only a new user message supersedes pending social decisions.
+                    # Retrying an existing request must not interrupt its own topic.
+                    from .social_models import SocialTopic
+                    from sqlalchemy import update
+                    session.execute(update(SocialTopic).where(SocialTopic.conversation_id==cid,SocialTopic.status=='active')
+                        .values(status='superseded',version=SocialTopic.version+1))
                 conversation = session.get(Conversation, cid)
-                service._append_message(session, conversation, "commander", "text" if run["mode"] == "chat" else "task", run["prompt"], metadata={"runId":run["id"]}, message_id=message_id)
+                service._append_message(session, conversation, "commander", "text" if run["mode"] == "chat" else "task", run.get('userPrompt',run["prompt"]), metadata={"runId":run["id"],"mentions":list(dict.fromkeys(mentions)),
+                    'attachments':[{k:a[k] for k in ('id','name','mime','conversationId')} for a in run.get('attachments',[])]}, message_id=message_id)
         if not run.get("userMessageId"):
+            coordinator.social_engine.activity.touch(cid,message_id)
             run = store.update(run["id"], userMessageId=message_id)
             store.event(run["id"], "conversation.changed", {"conversationId":cid})
         if run["status"] == "queued":
@@ -279,7 +301,11 @@ def install_run_api(app, service, settings):
 
     @app.get("/api/runs")
     async def list_runs():
-        return {"runs": store.list()}
+        from .character_identity import roster_actors,references_hidden
+        with session_scope() as session:
+            visible={a.id for a in roster_actors(session)}
+            hidden=set(session.scalars(select(Actor.id).where(Actor.kind=='agent')).all())-visible
+        return {"runs": [r for r in store.list() if not references_hidden(r,hidden)]}
 
     @app.post("/api/conversations/{conversation_id}/remove")
     async def remove_conversation(conversation_id: str):

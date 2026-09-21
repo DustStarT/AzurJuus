@@ -11,6 +11,10 @@
   --glass: rgba(255, 255, 255, 0.66);
   --shadow: 0 3px 10px #38586e12;
   --ease: cubic-bezier(0.22, 0.7, 0.25, 1);
+  --nav-width: 80px;
+  --list-row-height: 80px;
+  --avatar-size: 48px;
+  --bubble-radius: 8px;
 }
 * {
   box-sizing: border-box;
@@ -124,7 +128,7 @@ button:active:not(:disabled) {
   height: 100%;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  grid-template-columns: 92px minmax(0, 1fr);
+  grid-template-columns: var(--nav-width) minmax(0, 1fr);
   gap: 18px;
   padding: 0 18px 0 0;
   isolation: isolate;
@@ -136,7 +140,7 @@ button:active:not(:disabled) {
   align-items: center;
   overflow: hidden;
   border: 1px solid #ffffffb0;
-  border-radius: 0 20px 20px 0;
+  border-radius: 0 12px 12px 0;
   background: linear-gradient(165deg, #8ccddd, #afdce6 65%, #d3e7ed);
   box-shadow: 1px 0 0 #ffffff80;
   color: #407b94;
@@ -169,7 +173,7 @@ button:active:not(:disabled) {
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  margin-top: 64px;
+  margin-top: clamp(64px, 28vh, 260px);
   margin-bottom: auto;
   position: relative;
 }
@@ -180,7 +184,7 @@ button:active:not(:disabled) {
   justify-content: center;
   width: 60px;
   height: 66px;
-  border-radius: 13px;
+  border-radius: 7px;
   gap: 7px;
   color: #49a8cf;
 }
@@ -335,7 +339,7 @@ button:active:not(:disabled) {
   align-items: center;
   background: #ffffff72;
   border: 1px solid #ffffff5c;
-  border-radius: 15px;
+  border-radius: 6px;
   padding: 10px 12px;
   height: 52px;
   box-shadow: 0 2px 5px #65758a07;
@@ -363,7 +367,7 @@ button:active:not(:disabled) {
   justify-content: space-between;
   align-items: center;
   color: #8593a2;
-  padding: 18px 8px 12px;
+  padding: 12px 8px 8px;
   font-size: 11px;
   letter-spacing: 1px;
 }
@@ -377,7 +381,7 @@ button:active:not(:disabled) {
   padding: 2px 7px 9px 2px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 3px;
   scrollbar-gutter: stable;
 }
 .conversation-card {
@@ -387,31 +391,32 @@ button:active:not(:disabled) {
   gap: 14px;
   flex-shrink: 0;
   width: 100%;
-  height: 88px;
-  padding: 15px 15px;
+  height: var(--list-row-height);
+  padding: 12px;
   text-align: left;
-  border: 1px solid #fff9;
-  border-radius: 12px;
-  background: #f7fafba8;
-  box-shadow: 0 1px 2px #536e8608;
+  border: 1px solid transparent;
+  border-bottom-color: #ffffff85;
+  border-radius: 3px;
+  background: #f7fafb42;
+  box-shadow: none;
   transition:
     background 150ms,
     box-shadow 150ms;
 }
 .conversation-card:hover {
-  background: #fffffff0;
+  background: #ffffff9c;
 }
 .conversation-card.active {
-  background: #f7fdff;
-  border-color: #91cfdd;
-  box-shadow: 0 3px 12px #4572840c;
+  background: #effbffda;
+  border-color: #86cfdf;
+  box-shadow: none;
 }
 .conversation-card.active:before {
   content: "";
   position: absolute;
   left: 0;
-  top: 35%;
-  bottom: 35%;
+  top: 10%;
+  bottom: 10%;
   width: 3px;
   background: #59c4df;
   border-radius: 3px;
@@ -421,8 +426,8 @@ button:active:not(:disabled) {
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
-  width: 57px;
-  height: 57px;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
   border-radius: 50%;
   background: linear-gradient(140deg, #fdfefe, #e6e8f2);
   border: 3px solid #fff;
@@ -513,10 +518,10 @@ button:active:not(:disabled) {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-radius: 18px;
+  border-radius: 8px;
   background: #f7fbff59;
   border: 1px solid #ffffff84;
-  box-shadow: var(--shadow);
+  box-shadow: none;
   overflow: hidden;
 }
 .chat-header {
@@ -560,6 +565,23 @@ button:active:not(:disabled) {
   overflow: hidden;
   background: linear-gradient(140deg, #edf2f685, #e5ebf4a0 55%, #f1f5f8b0);
 }
+.mention-options {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 5;
+  width: 240px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid #dce6ed;
+  border-radius: 10px;
+  background: #f8fcff;
+  box-shadow: 0 5px 18px #41678018;
+}
+.mention-options button { display: flex; justify-content: space-between; width: 100%; padding: 9px; border-radius: 6px; }
+.mention-options button:hover, .mention-options button:focus-visible { background: #def3fa; }
+.mention-options small { color: #8295a5; }
 .character-backdrop {
   position: absolute;
   width: 100%;
@@ -606,7 +628,7 @@ button:active:not(:disabled) {
   display: flex;
   align-items: flex-start;
   gap: 13px;
-  margin-bottom: 23px;
+  margin-bottom: 14px;
   contain: layout style;
 }
 .message-row .avatar {
@@ -622,7 +644,7 @@ button:active:not(:disabled) {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin: 0 0 7px 3px;
+  margin: 0 0 4px 3px;
   color: #8a97a4;
   font-size: 11px;
   line-height: 1.4;
@@ -637,14 +659,14 @@ button:active:not(:disabled) {
 .message-bubble {
   max-width: 36em;
   position: relative;
-  padding: 13px 18px;
-  line-height: 1.7;
+  padding: 10px 14px;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: #293d4c;
   background: #fffffff5;
   border: 1px solid #ffffff99;
-  border-radius: 3px 17px 17px 17px;
+  border-radius: 3px var(--bubble-radius) var(--bubble-radius) var(--bubble-radius);
   font-size: 15px;
   box-shadow: 0 1px 3px #66799108;
 }
@@ -666,7 +688,7 @@ button:active:not(:disabled) {
   background: linear-gradient(125deg, #89d3e8, #72c8e4);
   border-color: #a8e0ef;
   color: #fff;
-  border-radius: 17px 3px 17px 17px;
+  border-radius: var(--bubble-radius) 3px var(--bubble-radius) var(--bubble-radius);
   box-shadow: 0 2px 4px #529cbd12;
 }
 .message-row--self .avatar {
@@ -806,6 +828,7 @@ button:active:not(:disabled) {
   background: #eef5f8;
 }
 .composer-input {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 15px;
@@ -910,6 +933,9 @@ button:active:not(:disabled) {
   min-height: 0;
   padding: 0 9px 22px;
 }
+.circle-layout > .empty-state {
+  margin: auto;
+}
 .circle-toolbar {
   display: flex;
   justify-content: space-between;
@@ -932,7 +958,7 @@ button:active:not(:disabled) {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 17px;
+  gap: 10px;
   padding: 3px 6px 20px;
 }
 .post-card {
@@ -942,8 +968,8 @@ button:active:not(:disabled) {
   padding: 19px 30px;
   background: linear-gradient(115deg, #fdfdffad, #f4f8fd99);
   border: 1px solid #ffffffcf;
-  border-radius: 14px;
-  box-shadow: 0 3px 8px #556c8420;
+  border-radius: 6px;
+  box-shadow: none;
   text-align: left;
   min-height: 132px;
   flex-shrink: 0;
@@ -1932,7 +1958,7 @@ button:active:not(:disabled) {
 }
 @media (min-width: 1600px) {
   .juus-shell {
-    grid-template-columns: 92px minmax(0, 1fr);
+    grid-template-columns: var(--nav-width) minmax(0, 1fr);
     gap: 23px;
     padding-right: 24px;
   }
@@ -1940,17 +1966,17 @@ button:active:not(:disabled) {
     height: 72px;
   }
   .chat-layout {
-    grid-template-columns: 330px minmax(0, 1fr);
+    grid-template-columns: 320px minmax(0, 1fr);
     gap: 24px;
   }
   .conversation-card {
-    height: 94px;
+    height: var(--list-row-height);
     gap: 12px;
-    padding: 14px;
+    padding: 12px;
   }
   .conversation-card > .avatar {
-    width: 52px;
-    height: 52px;
+    width: var(--avatar-size);
+    height: var(--avatar-size);
   }
   .conversation-title strong {
     font-size: 17px;
@@ -1969,7 +1995,7 @@ button:active:not(:disabled) {
   }
   .message-bubble {
     font-size: 15px;
-    padding: 15px 20px;
+    padding: 10px 14px;
   }
   .message-row > .avatar {
     width: 46px;
@@ -1977,7 +2003,7 @@ button:active:not(:disabled) {
   }
   .message-row {
     gap: 17px;
-    margin-bottom: 27px;
+    margin-bottom: 14px;
   }
   .composer {
     padding: 15px 25px;

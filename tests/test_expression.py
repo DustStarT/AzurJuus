@@ -6,6 +6,31 @@ from test_cognition import world
 from backend.expression import validate
 from backend.terminal_characters import activate, inspect, lore
 
+def test_structured_deepseek_call_budget_and_empty_output(world,monkeypatch):
+    import httpx
+    c,_,_=world
+    payloads=[]
+    output={'choices':[{'message':{'content':'{"relationships":[]}'},'finish_reason':'stop'}]}
+    class Client:
+        def __init__(self,**kwargs):pass
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+        async def post(self,url,**kwargs):
+            payloads.append(kwargs['json'])
+            return httpx.Response(200,json=output)
+    monkeypatch.setattr('backend.expression.httpx.AsyncClient',Client)
+    cfg={'llmBaseUrl':'https://api.deepseek.com/v1','llmModel':'deepseek-flash','llmApiKey':'synthetic'}
+    assert asyncio.run(c.expression.complete([],cfg))=={'relationships':[]}
+    assert payloads[-1]['thinking']=={'type':'disabled'}
+    asyncio.run(c.expression.complete([],{**cfg,'llmBaseUrl':'http://localhost:8000'}))
+    assert 'thinking' not in payloads[-1]
+    output['choices'][0]['message']['content']=''
+    with pytest.raises(ValueError,match='未返回结构化正文'):
+        asyncio.run(c.expression.complete([],cfg))
+    output['choices'][0]['finish_reason']='length'
+    with pytest.raises(ValueError,match='超出输出预算'):
+        asyncio.run(c.expression.complete([],cfg))
+
 
 def fixture_run(c, aid):
     from backend.database import session_scope
@@ -192,6 +217,29 @@ def test_task_answer_can_preserve_multiple_book_descriptions(world):
     assert asyncio.run(c.expression.speak(run,actor,'result','告知结果',
         {'request':run['prompt'],'summary':answer,'review':{'summary':'审查通过'}})) == answer
     assert '复核通过只是可信度背景' in requests[0][0]['content']
+
+
+def test_group_targeting_and_partial_failure_remain_visible(world):
+    c, _, (aid,bid,*_) = world
+    run, actor = fixture_run(c, aid)
+    run = c.store.update(run['id'],actors=[actor,{'id':bid,'name':'测试同伴'}],prompt='大家好')
+    spoken=[]
+    async def speak(run,actor,*args,**kwargs):
+        spoken.append(actor['id'])
+        if actor['id']==aid:
+            raise RuntimeError('synthetic timeout')
+        # A later successful utterance used to clear the earlier failure.
+        c.store.update(run['id'],expressionError=None)
+        return '我在。'
+    c.expression.speak=speak
+    assert asyncio.run(c.group_chat(run))=='我在。'
+    saved=c.store.get(run['id'])
+    assert saved['expressionError'] and saved['groupChatErrors'][0]['actorId']==aid
+    spoken.clear()
+    run=c.store.update(run['id'],prompt='测试同伴，你觉得呢？')
+    assert asyncio.run(c.group_chat(run))=='我在。'
+    assert spoken==[bid]
+    assert c.store.get(run['id'])['expressionError'] is None
 
 
 def test_card_override_and_prompt_preview(world):

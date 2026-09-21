@@ -15,6 +15,8 @@ from conftest import configure_test_env
 
 @pytest.mark.asyncio
 async def test_social_model_waits_without_database_connection_and_can_be_preempted(monkeypatch, tmp_path):
+    # Exercise the retained engine explicitly; production Moments is paused.
+    monkeypatch.setattr('backend.idle_social.MOMENTS_ENABLED', True)
     configure_test_env(monkeypatch, tmp_path)
     app = create_app()
     with TestClient(app):
@@ -98,6 +100,8 @@ def test_sqlite_naive_utc_post_does_not_become_immediately_due():
 
 
 def test_websocket_replay_cursor_reset_and_social_notifications(monkeypatch, tmp_path):
+    # Retained notification behavior is tested with Moments explicitly enabled.
+    monkeypatch.setattr('backend.idle_social.MOMENTS_ENABLED', True)
     configure_test_env(monkeypatch, tmp_path)
     app = create_app()
     store = app.state.runs.store
@@ -115,6 +119,8 @@ def test_websocket_replay_cursor_reset_and_social_notifications(monkeypatch, tmp
             with pytest.raises(WebSocketDisconnect) as exc:
                 ws.receive_json()
             assert exc.value.code == 1008
+        snapshot = client.get("/api/bootstrap").json()["snapshot"]
+        client.post('/api/posts/publish',json={'authorId':snapshot['agents'][0]['id'],'body':'用于回放验收的独立动态。'}).raise_for_status()
         posts = client.get("/api/bootstrap").json()["snapshot"]["posts"]
         response = client.post("/api/posts/comment", json={"postId": posts[0]["id"], "body": "Replay fixture"})
         assert response.status_code == 200, response.text

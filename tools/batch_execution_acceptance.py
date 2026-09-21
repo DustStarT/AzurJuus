@@ -1,4 +1,4 @@
-"""Launch the unmodified .bat entry, drive QWebEngine via local CDP, close via WM_CLOSE.
+"""Launch the windowless Python entry, drive QWebEngine via CDP, close via WM_CLOSE.
 
 Uses only synthetic history/files in a new workspace; reads only saved model credentials.
 """
@@ -41,7 +41,7 @@ def main():
     os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///' + (STATE / 'app.db').as_posix(),
         AZURJUUS_WORKSPACE_STATE_PATH=str(STATE / 'state' / 'workspace.json'), AZURJUUS_WORKSPACE_ROOT=str(WORK),
         AZURJUUS_REDIS_URL='', AZURJUUS_CHROMA_URL='', AZURJUUS_SOCIAL_ENABLED='0',
-        AZURJUUS_EXECUTION_BACKEND='hermes', AZURJUUS_PORT=str(port),
+        AZURJUUS_EXECUTION_BACKEND='hermes', AZURJUUS_PORT=str(port), AZURJUUS_DESKTOP_LOG_DIR=str(STATE/'logs'),
         QTWEBENGINE_REMOTE_DEBUGGING='127.0.0.1:' + str(debug))
     # Match .env.example and the user's actual .bat launch configuration.
     os.environ['AZURJUUS_WORKSPACE_STATE_PATH'] = (STATE / 'state' / 'workspace.json').relative_to(ROOT).as_posix()
@@ -56,7 +56,7 @@ def main():
             settings.authorized_workspace_root = str(WORK)
     out = ROOT / 'validation' / 'batch-execution'
     out.mkdir(parents=True, exist_ok=True)
-    report = {'status': 'failed', 'stateDirectory': str(STATE), 'checks': [], 'entry': 'launch_azurjuus.bat',
+    report = {'status': 'failed', 'stateDirectory': str(STATE), 'checks': [], 'entry': 'pythonw tools/desktop_entry.py',
         'relativeStatePath': os.environ['AZURJUUS_WORKSPACE_STATE_PATH']}
     user32 = ctypes.windll.user32
     user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -67,7 +67,7 @@ def main():
     def close_window():
         nonlocal owned
         owned = psutil.Process(process.pid).children(recursive=True)
-        pids = {p.pid for p in owned}
+        pids = {process.pid, *(p.pid for p in owned)}
         @enum_callback
         def visit(hwnd, _):
             pid = wintypes.DWORD()
@@ -78,7 +78,7 @@ def main():
         user32.EnumWindows(visit, 0)
     try:
         with (STATE / 'launcher.log').open('w', encoding='utf-8') as log:
-            process = subprocess.Popen(['cmd.exe', '/d', '/c', str(ROOT / 'launch_azurjuus.bat')], cwd=ROOT,
+            process = subprocess.Popen([str(ROOT/'.venv/Scripts/pythonw.exe'), '-X', 'utf8', str(ROOT/'tools/desktop_entry.py')], cwd=ROOT,
                 stdout=log, stderr=log, stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
             with sync_playwright() as pw:
                 browser = None
@@ -204,6 +204,7 @@ def main():
                     status = db.execute('SELECT status FROM runs WHERE id=?', (active['id'],)).fetchone()[0]
                 assert status == 'paused', status
                 assert 'Traceback' not in (STATE / 'launcher.log').read_text(encoding='utf-8')
+                assert 'Traceback' not in (STATE / 'logs/desktop.log').read_text(encoding='utf-8')
                 homes = list((STATE / 'state/hermes').glob('*/*'))
                 assert homes and any((home / 'state.db').is_file() for home in homes)
                 assert not (ROOT / '.vendor/hermes-agent' / os.environ['AZURJUUS_WORKSPACE_STATE_PATH']).parent.exists()

@@ -67,6 +67,9 @@ def initialize_database(settings: Settings, metadata) -> str:
                     connection.exec_driver_sql("PRAGMA busy_timeout=15000")
                 connection.execute(text("SELECT 1"))
             from . import cognition_models  # register additive business tables
+            from . import social_models
+            from .migrations import backup_social_migration
+            backup_social_migration(engine, settings)
             from .migrations import backup_cognition_migration
             backup_cognition_migration(engine, settings)
             metadata.create_all(engine)
@@ -76,6 +79,8 @@ def initialize_database(settings: Settings, metadata) -> str:
                 connection.execute(text("CREATE TABLE IF NOT EXISTS azur_schema_migrations(version INTEGER PRIMARY KEY)"))
                 if not connection.execute(text("SELECT version FROM azur_schema_migrations WHERE version=2")).first():
                     connection.execute(text("INSERT INTO azur_schema_migrations VALUES(2)"))
+                if not connection.execute(text("SELECT version FROM azur_schema_migrations WHERE version=3")).first():
+                    connection.execute(text("INSERT INTO azur_schema_migrations VALUES(3)"))
             if _engine is not None and _engine is not engine:
                 _engine.dispose()
             _engine = engine

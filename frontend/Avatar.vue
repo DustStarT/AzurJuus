@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import type { Agent } from "./types";
-const props = defineProps<{ agent?: Agent; group?: boolean }>();
+const props = defineProps<{ agent?: Agent; group?: boolean; hub?:boolean }>();
 const failed = ref(false);
 watch(
   () => props.agent?.avatarUrl,
@@ -11,7 +11,11 @@ watch(
 <template>
   <span class="avatar" :class="{ 'avatar--group': group }"
     ><img
-      v-if="agent?.avatarUrl && !failed"
+      v-if="hub"
+      src="/resources/ui/port-anchor.svg"
+      alt="港区船锚标志"
+    /><img
+      v-else-if="agent?.avatarUrl && !failed"
       :src="agent.avatarUrl"
       :alt="agent.name"
       loading="lazy"

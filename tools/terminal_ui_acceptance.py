@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 from uuid import uuid4
 os.environ['AZURJUUS_UI_TEST_DIRECTORY']='terminal-ui-'+uuid4().hex
+os.environ['AZURJUUS_SOCIAL_ENGINE_ENABLED']='1'
 from ui_test_server import build_server, ROOT
 from playwright.sync_api import sync_playwright
 
@@ -38,6 +39,50 @@ def main():
             page.reload();page.get_by_label('消息输入').wait_for()
             assert page.get_by_role('button',name='立即显示').count()==0
             report['checks'].append('Historical replies do not replay')
+            hub_icon=page.locator('.conversation-card').filter(has_text='港区协作频道').get_by_alt_text('港区船锚标志')
+            assert hub_icon.count()==1
+            page.get_by_role('button',name='新建群聊',exact=True).click()
+            dialog=page.get_by_role('dialog',name='新建群聊')
+            dialog.get_by_label('群名称',exact=True).fill('手动测试群')
+            for member in boot['agents'][:2]:dialog.get_by_label(member['name'],exact=True).check()
+            with page.expect_response('**/api/conversations/groups') as created:
+                dialog.get_by_role('button',name='创建群聊',exact=True).click()
+            assert created.value.ok
+            page.locator('.chat-header').get_by_text('手动测试群',exact=True).wait_for()
+            page.locator('.conversation-card').filter(has_text=group['title']).click()
+            report['checks'].append('Manual group creation selects roster members; hub uses dedicated anchor')
+            page.screenshot(path=str(out/'group.png'))
+            page.get_by_label('查看成员资料',exact=True).click()
+            page.get_by_label('频道社交设置').wait_for()
+            page.get_by_text('全局主动交流',exact=True).click()
+            with page.expect_response('**/api/social/settings') as changed:
+                page.get_by_label('暂停后台社交与反思',exact=True).check()
+            assert changed.value.ok
+            assert page.request.get(base+'/api/social/state').json()['settings']['paused']
+            with page.expect_response('**/api/social/settings') as changed:
+                page.get_by_label('暂停后台社交与反思',exact=True).uncheck()
+            assert changed.value.ok
+            with page.expect_response('**/api/social/settings') as changed:
+                page.get_by_label('后台每小时调用上限').fill('20')
+                page.get_by_label('后台每小时调用上限').press('Tab')
+            assert changed.value.ok
+            assert page.request.get(base+'/api/social/state').json()['settings']['hourlyCalls']==20
+            report['checks'].append('Global social pause and rolling-call limit persist through the real settings UI')
+            page.screenshot(path=str(out/'members.png'))
+            assert page.get_by_text('人物目录', exact=True).count()==0
+            directory=page.request.get(base+'/api/social/actors').json()['actors']
+            assert all(a['availability']=='active' and not a['id'].startswith('background-') for a in directory)
+            report['checks'].append('No unsolicited background character directory or activation entry')
+            page.get_by_label('查看成员资料',exact=True).click()
+            composer=page.get_by_label('消息输入')
+            composer.fill('@')
+            page.get_by_label('提及人物').wait_for()
+            mention_name=boot['agents'][0]['name']
+            page.get_by_label('提及人物').get_by_role('button').filter(has_text=mention_name).click()
+            assert composer.input_value()=='@'+mention_name+' '
+            assert composer.evaluate('(el)=>document.activeElement===el')
+            composer.fill('')
+            report['checks'].append('Group mention completion inserts a name and preserves input focus; member controls render')
             alignment=page.request.post(base+'/__acceptance/alignment').json()
             page.locator('.conversation-card').filter(has_text=alignment['conversationTitle']).click()
             for mid in alignment['messageIds']:
@@ -67,7 +112,30 @@ def main():
             dm=next(c for c in boot['conversations'] if c['kind']=='dm')
             page.locator('.conversation-card').filter(has_text=dm['title']).click()
             page.screenshot(path=str(out/'private.png'))
+            from ui_test_server import TEST_ROOT
+            response=page.request.post(base+'/api/workspace/save',data={'workspace':{'settings':{'authorizedWorkspaceRoot':str(TEST_ROOT/'workspace')}}})
+            assert response.ok
+            page.get_by_label('上传图片或文件').set_input_files({'name':'ui-check.txt','mimeType':'text/plain','buffer':b'isolated upload'})
+            page.get_by_role('button',name='ui-check.txt ×',exact=True).wait_for()
+            page.get_by_role('button',name='ui-check.txt ×',exact=True).click()
+            page.get_by_label('打开设置',exact=True).click()
+            page.get_by_role('button',name='人物关系与任务',exact=True).click()
+            graph = page.get_by_label('人物关系网络', exact=True)
+            graph.get_by_role('button', name='查看信浓的关系', exact=True).click()
+            graph.get_by_role('button', name='更新关系资料', exact=True).wait_for()
+            assert page.get_by_role('button', name='新增人物', exact=True).count() == 0
+            report['checks'].append('Relationship graph nodes open details; duplicate add-character entry removed')
+            page.get_by_label('每个协作任务的成员上限').fill('18')
+            with page.expect_response('**/api/terminal/settings') as saved_config:
+                page.get_by_role('button',name='保存任务上限',exact=True).click()
+            assert saved_config.value.ok
+            assert page.request.get(base+'/api/terminal/settings').json()['settings']['maxTaskMembers']==18
+            page.screenshot(path=str(out/'terminal-settings.png'))
+            page.get_by_label('关闭设置',exact=True).click()
+            report['checks'].append('Central character/task settings persist; attachment upload and removal work through the UI')
             page.get_by_label('朋友圈',exact=True).click()
+            page.get_by_text('动态功能完善中',exact=True).wait_for()
+            assert page.locator('.post-card').count()==0
             page.screenshot(path=str(out/'moments.png'))
             page.get_by_label('打开任务中心',exact=True).click()
             page.screenshot(path=str(out/'work.png'))

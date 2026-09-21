@@ -78,7 +78,8 @@ class HermesBridge:
         self.home.mkdir(parents=True, exist_ok=True)
         config = {
             "model": {"default": self.settings["llmModel"], "provider": "custom", "base_url": self.settings["llmBaseUrl"], "api_key": "${OPENAI_API_KEY}"},
-            "agent": {"max_turns": int(self.settings.get("maxTurns", 80))},
+            "agent": {"max_turns": int(self.settings.get("maxTurns", 80)),
+                'image_input_mode':'native' if self.settings.get('visionEnabled') else 'text'},
             "platform_toolsets": {"cli": ["mcp-azurjuus"]},
             "tools": {"tool_search": {"enabled": "off"}},
             "mcp_servers": {"azurjuus": {"command": worker_python(), "args": ["-X", "utf8", str(ROOT / "backend" / "mcp_host.py")], "env": {"AZURJUUS_TOOL_ENDPOINT": "${AZURJUUS_TOOL_ENDPOINT}", "AZURJUUS_TOOL_TOKEN": "${AZURJUUS_TOOL_TOKEN}", "AZURJUUS_TOOL_ACTIONS": "${AZURJUUS_TOOL_ACTIONS}"}, "timeout": 3600}},
@@ -178,6 +179,8 @@ class HermesBridge:
             await self.stage("session", "正在准备角色与工具")
             session = await self.rpc("session.create", {"cwd": workspace, "messages": history or [], "model": self.settings["llmModel"], "provider": "custom"})
             self.session_id = session["session_id"]
+            for path in self.settings.get('_inputImages',[]):
+                await self.rpc('image.attach',{'session_id':self.session_id,'path':path})
         while not self.completed.empty():
             self.completed.get_nowait()
         # prompt.submit acknowledges a queued turn before the agent is built.

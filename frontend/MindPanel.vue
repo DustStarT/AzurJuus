@@ -8,7 +8,7 @@ type Mind = {version:number;enabled:boolean;data:{focus:Source[];commitments:Sou
 type Experience = {id:string;text:string;sourceSeq:number;kind:string;data:{userCorrection?:string}};
 const mind = ref<Mind>();
 const experiences = ref<Experience[]>([]);
-const relations = ref<{peerId:string;name:string;summary:string;userDefined?:string}[]>([]);
+const relations = ref<{peerId:string;name:string;summary:string;userDefined?:string;background?:unknown[];sharedSources?:unknown[];defaultRelationship?:{familiarity:string}}[]>([]);
 const relationshipEdit = ref(''), relationshipText = ref('');
 const cursor = ref<number|null>(null), error = ref(''), editing = ref(''), correction = ref('');
 let active = true, generation = 0, timer = 0;
@@ -20,7 +20,8 @@ async function load() {
       api<{experiences:Experience[];nextCursor:number|null}>(`/api/actors/${props.actorId}/experiences`),
       api<{relationships:typeof relations.value}>(`/api/actors/${props.actorId}/relationships`)]);
     if (!active || request !== generation || (mind.value && state.version < mind.value.version)) return;
-    mind.value = state; experiences.value = events.experiences; cursor.value = events.nextCursor; relations.value = peers.relationships;
+    mind.value = state; experiences.value = events.experiences; cursor.value = events.nextCursor;
+    relations.value = peers.relationships.filter(peer => peer.userDefined || peer.background?.length || peer.sharedSources?.length || peer.defaultRelationship?.familiarity === 'familiar');
   } catch(e) { error.value = (e as Error).message; }
 }
 async function action(path:string, body:unknown = {}) {
