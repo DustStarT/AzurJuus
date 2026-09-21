@@ -155,6 +155,7 @@ class Cognition:
             return {'actorId': actor_id, 'version': state.version, 'enabled': state.enabled and self.enabled,
                 'data': state.data, 'anchor': {'text': actor.system_prompt or actor.persona or '',
                     'source': actor.character_url, 'note': '导入设定；未经逐项核实的内容属于项目解释，非自动确认的原作事实'},
+                'originalBackground':(actor.extra_json or {}).get('originalMindNotes',[]),
                 'error': self.last_error}
 
     def relationships(self, actor_id):
@@ -308,6 +309,7 @@ class Cognition:
                 'commitments': [] if social else state['data'].get('commitments', [])[-5:],
                 'mood': '依据当前可见内容自然回应' if social else state['data'].get('mood'),
                 'memories': memories,
+                'originalBackground':state.get('originalBackground',[])[:4],
                 'relationships': [{'peerId':r['peerId'], 'name':r['name'],
                     'background': r['background'], 'userDefinedRelationship': r['userDefined'],
                     'approach':r['observations'][-1].get('approach','neutral') if r['observations'] else 'neutral'} for r in relations[:6]] if social

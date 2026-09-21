@@ -27,7 +27,8 @@ def test_enable_is_additive_social_only_and_idempotent(world):
         assert s.scalar(select(ConversationMember).where(ConversationMember.conversation_id=='port-hub',ConversationMember.actor_id==aid)) is None
         assert s.scalar(select(ConversationMember).where(ConversationMember.conversation_id=='dm-'+aid,ConversationMember.actor_id=='commander'))
         assert len(s.scalars(select(Actor).where(Actor.source_character=='七省')).all())==1
-    assert '原创终端表达示例' in context(aid)[0]
+    assert card('七省')['style'] in context(aid)[0]
+    assert '原创终端表达示例' not in context(aid)[0]
     response=client.post('/api/messages/send',json={'conversationId':'dm-'+aid,'mode':'task','content':'列出文件'})
     assert response.status_code==400 and '尚未开放' in response.json()['detail']
 

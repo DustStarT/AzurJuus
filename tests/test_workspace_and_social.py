@@ -47,6 +47,8 @@ def test_workspace_settings_and_ui_session_persist(monkeypatch, tmp_path: Path) 
 
 def test_social_publish_and_comment(monkeypatch, tmp_path: Path) -> None:
     configure_test_env(monkeypatch, tmp_path)
+    # Moments is paused in the product; exercise its retained API in isolation.
+    monkeypatch.setattr('backend.idle_social.MOMENTS_ENABLED', True)
     with TestClient(create_app()) as client:
         bootstrap = client.get("/api/bootstrap").json()["snapshot"]
         author_id = bootstrap["agents"][0]["id"]

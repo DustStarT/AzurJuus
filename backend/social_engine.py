@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
@@ -13,17 +14,34 @@ from .terminal_characters import TERMINAL, context, lore, worldbook
 from .expression import validate
 from .idle_social import _generate, SocialPreempted
 from .social_activity import SocialActivity
+from .message_order import message_order
 
 
 def stable(*parts):
     return 'social-' + hashlib.sha256(':'.join(parts).encode()).hexdigest()[:32]
 
 
+SOCIAL_ACTIONS={'speak','wait','end','invite','create_group'}
+
+def normalized_social_action(value):
+    """Accept the model's unambiguous JSON variants; still validate effects."""
+    if not isinstance(value,dict):return value
+    if isinstance(value.get('action'),str) and value['action'] in SOCIAL_ACTIONS:return value
+    raw=value.get('type')
+    if isinstance(raw,str) and raw in SOCIAL_ACTIONS:return {**value,'action':raw}
+    if isinstance(value.get('segments'),list) and value['segments']:
+        return {**value,'action':'speak'}
+    if value.get('targetId') and value.get('reason') and value.get('summary'):
+        return {**value,'action':'create_group' if value.get('title') else 'invite'}
+    return value
+
+
 class SocialEngine:
     def __init__(self, coordinator, service):
         self.c, self.service = coordinator, service
-        # Enable only after staged acceptance; preserve the existing path for rollback.
-        self.enabled = os.getenv('AZURJUUS_SOCIAL_ENGINE_ENABLED', '0') == '1'
+        # The previous default silently selected the fixed-speaker fallback in the desktop launcher.
+        # Preserve an explicit off switch for rollback.
+        self.enabled = os.getenv('AZURJUUS_SOCIAL_ENGINE_ENABLED', '1') == '1'
         self.gate = asyncio.Semaphore(1)
         self.generate = coordinator.expression.complete
         self.activity = SocialActivity(self)
@@ -52,7 +70,8 @@ class SocialEngine:
             from .character_identity import roster_actors
             actors = roster_actors(session)
             roster = [{'id':a.id,'name':a.name,'sourceName':a.source_character or a.name,'faction':a.faction} for a in actors]
-            messages = session.scalars(select(Message).where(Message.conversation_id==cid).order_by(Message.created_at.desc(),Message.id.desc()).limit(40)).all()[::-1]
+            messages = session.scalars(select(Message).where(Message.conversation_id==cid).order_by(
+                *message_order(session,newest_first=True)).limit(40)).all()[::-1]
             joined = config.get('joinedAt', {}).get(actor_id) if actor_id else None
             excluded = set(config.get('joinBoundaryIds', {}).get(actor_id, []))
             allowed_ids={'commander',*(a['id'] for a in roster)}
@@ -61,7 +80,7 @@ class SocialEngine:
             public_config = {key: config.get(key, default) for key, default in [('muted', False), ('allowInvites', True)]}
             return {'id':cid,'kind':room.kind,'title':room.title,'config':public_config,
                 'members':[a for a in roster if a['id'] in ids], 'directory':roster,
-                'history':[{'id':m.id,'speakerId':m.speaker_id,'speakerName':next((a['name'] for a in roster if a['id']==m.speaker_id),'指挥官'),'text':m.body,'replyTo':(m.metadata_json or {}).get('replyTo'),'mentions':(m.metadata_json or {}).get('mentions',[])} for m in visible],
+                'history':[{'id':m.id,'speakerId':m.speaker_id,'speakerName':next((a['name'] for a in roster if a['id']==m.speaker_id),'指挥官'),'text':m.body,'replyTo':(m.metadata_json or {}).get('replyTo'),'mentions':(m.metadata_json or {}).get('mentions',[]),'topicId':(m.metadata_json or {}).get('topicId')} for m in visible],
                 'invitationSummary':config.get('summaries',{}).get(actor_id,''),
                 'limitedHistory': bool(joined)}
 
@@ -108,13 +127,33 @@ class SocialEngine:
         def score(a):
             explicit=a['id'] in last.get('mentions',[]) or a['name'] in last['text'] or a.get('sourceName',a['name']) in last['text']
             name=a.get('sourceName',a['name'])
-            interest=sum(word in last['text'] for word in interests.get(name,[]))
+            # After the first reply, current speech and explicit mentions drive
+            # participation. Re-ranking by the old user prompt makes everyone
+            # revisit it even when the group has moved on.
+            current=last['text'] if last['speakerId']=='commander' or topic.get('spoken') else topic['prompt']
+            interest=sum(word in current for word in interests.get(name,[]))
             # Canonical familiarity influences willingness, not tool trust.
             known=any(r['from']==name and r['to']==last_name for r in book['relationships'])
             signal=signals[a['id']]
             continuity=signal['familiarity']+int(bool(signal['commitments']))
-            return (int(explicit), interest*2+int(known)+continuity-min(2,recent.count(a['id'])), -recent.count(a['id']), a['id'])
-        return sorted([a for a in room['members'] if a['id']!=last['speakerId'] and (a['id'] not in topic.get('withdrawn',[]) or score(a)[0])],key=score,reverse=True)[:3]
+            return (int(explicit), interest*2+int(known)+continuity-2*recent.count(a['id']), -recent.count(a['id']), a['id'])
+        ordered=sorted([a for a in room['members'] if a['id']!=last['speakerId'] and (a['id'] not in topic.get('withdrawn',[]) or score(a)[0])],key=score,reverse=True)
+        if not room['history'] and topic.get('openingActorId'):
+            ordered.sort(key=lambda a:a['id']!=topic['openingActorId'])
+        return ordered[:3]
+
+    @staticmethod
+    def conversation_focus(room, topic):
+        """Current conversational handoff, without repeatedly resetting the topic."""
+        history=room['history']
+        latest_user=next((m for m in reversed(history) if m['speakerId']=='commander'),None)
+        latest=history[-1] if history else None
+        question=latest if latest and any(mark in latest['text'] for mark in ('？','?')) else None
+        return {'request':topic['prompt'] if not topic.get('spoken') else None,
+            'latestUser':{'id':latest_user['id'],'text':latest_user['text']} if latest_user and (not topic.get('spoken') or latest is latest_user) else None,
+            'current':{'id':latest['id'],'speakerId':latest['speakerId'],'text':latest['text']} if latest else None,
+            'openQuestion':{'id':question['id'],'speakerId':question['speakerId'],
+                'text':question['text']} if question else None}
 
     def participation(self, actor, room):
         if not self.c.cognition:
@@ -131,30 +170,59 @@ class SocialEngine:
         persona,_=context(actor['id'])
         # A group expression must not receive private task bodies or judgments.
         mind=json.dumps(self.participation(actor,room),ensure_ascii=False)
-        rules=TERMINAL+'你在群聊中自行决定是否参与，不必回答每条消息。已有同伴说清时可保持沉默。只能扮演当前人物。'
-        rules+='返回 JSON：action 为 speak/wait/end/invite/create_group；speak 含 segments（1至3条短消息）、sourceIds、replyTo（消息编号或null）、mentions（人物编号数组）；invite 含 targetId、reason、summary（只可分享的邀请摘要）；create_group 另含 title，邀请一名相关人物另建包含用户的公开群，只有确实需要独立话题时才使用；wait/end 不含台词。'
-        rules+='邀请尚未成功，不能宣称已经入群。不要替别人说话，不复述任务审计。普通发言合计不超过180字。'
-        rules+='优先回应最新用户消息及同伴尚未得到答复的具体问题。短答如嗯、呢须结合前文理解；不擅自把别人的提问当成自己发起的新话题，不编造工作记录来填空。history 中 speakerName 是实际发言者，replyTo 指明你回应哪句话。end 仅表示自己暂不参与，不替全群宣布结束。最后两次发言只答现有问题或自然收束，不再发起新的问题。'
-        rules+='sourceIds 必须且只能包含本次输入的 sourceId；它是本次行动的来源编号。回复的历史消息编号只放在 replyTo，不得与 sourceIds 混用。'
-        rules+='一轮上限是止损线，不是要说满的目标。通常一两条短消息就够，不要每次发三段。用户已得到可用答案且没有未解决的问题时，选择 wait 或 end，不为维持对话再问一个相近问题。不要轮流道谢、总结或反复提同一爱好。'
-        rules+='个人轻度日常只属于虚构分享；不要替用户安排购买、假定用户房间条件，也不要承诺替用户去商店等无法执行的线下行动。'
-        rules+='可见认知中的 familiarity 仅表示本频道实际交流过，不是亲密度或能力评分；commitments 是本人曾说过、当前仍可见且未标记结束的承诺，可能已过时，先结合对话判断，不机械重复或声称已经兑现。不要把这些内部字段说出来。'
+        latest=room['history'][-1] if room['history'] else None
+        direct_request=bool(not topic.get('spoken') and latest and latest['speakerId']=='commander' and (
+            actor['id'] in latest.get('mentions',[]) or '@'+actor['name'] in latest['text'] or
+            '@'+actor.get('sourceName',actor['name']) in latest['text']))
+        new_group_opening=bool(not room['history'] and topic.get('openingActorId')==actor['id'])
+        new_group_request=bool(direct_request and any(word in latest['text'] for word in ('建群','新群','另开群','拉个群')))
+        # Keep the speaking contract short; follow the current handoff.
+        rules=(TERMINAL+'你只扮演当前人物。根据眼前消息和你可见的经历决定发言、邀请或沉默。'
+            '先判断此刻说话有没有新作用：回答、补充具体信息、不同意并说明原因、求助、开个轻松但相关的小玩笑，或自然收住。'
+            '已经有人说清楚时可以 wait；不为了填满轮数轮流致谢、自我介绍、重复问题或总结。'
+            '若用户刚提出具体问题，第一位有把握的成员直接回答；不知道就坦白，不绕圈追问。'
+            '后续跟着最近发言和人物间实际关系走，旧问题不用每轮重答。'
+            '每次通常一句或两句、合计不超过120字；语气跟当前人物、对象和情境走，不照抄角色卡示例，不堆口癖和省略号。'
+            '不能编造任务成果、实验读数、已整理或已发出的记录，也不能替别人说话。轻度日常可以聊，但不要把即兴设想说成可核验的数据。只能引用当前可见消息，replyTo 是被回应的消息编号。'
+            '返回 JSON：action 为 speak/wait/end/invite/create_group；speak 含 segments（1至3条）、sourceIds（仅当前 sourceId）、replyTo（消息编号或 null）、mentions（人物编号数组）；'
+            'invite 含 targetId、reason、summary；create_group 另含 title；wait/end 无台词。')
+        if topic.get('spoken',0)>=6:
+            rules+='这一话题已经接续多轮。只有确有新内容或仍需回答的具体问题才发言；可以一句话自然收住，别再发起新的追问或承诺。'
+        if direct_request:
+            rules+='用户正在点名向你提出请求。你可以接受、拒绝或说明条件，但要用行动或一句话回应，不能无声略过。'
+        if new_group_request:
+            rules+='用户要另建一个群：请用 create_group，目标人物即使已在当前群也可以加入新群；invite 只用于把群外人物加进当前群。若不愿建群，用 speak 简短说明。'
+        if new_group_opening:
+            rules+='你刚发起这个新群。现在用一句自然的开场说明要聊什么，给同伴接话的空间；不要轮流自我介绍，也不要声称已经完成任何资料或工作。'
+        current_text=' '.join(m['text'] for m in room['history'][-4:]) or topic['prompt']
+        visible_room={**room,'history':room['history'][-12:]}
         messages=[{'role':'system','content':rules},{'role':'system','content':'当前人物：'+persona},
             {'role':'system','content':'可见认知：'+mind},
-            {'role':'system','content':'相关背景：'+json.dumps(lore(topic['prompt'],actor.get('sourceName',actor['name'])),ensure_ascii=False)},
-            {'role':'user','content':json.dumps({'room':room,'topic':topic['prompt'],'sourceId':source,
-                'turnsRemaining':max(0,10-topic.get('spoken',0)),'instruction':'先回应当前问题；仅在有新的有效回应时参与，不用新日常转移问题。'},ensure_ascii=False)}]
+            {'role':'system','content':'相关背景：'+json.dumps(lore(current_text,actor.get('sourceName',actor['name'])),ensure_ascii=False)},
+            {'role':'user','content':json.dumps({'room':visible_room,'focus':self.conversation_focus(room,topic),'sourceId':source},ensure_ascii=False)}]
         async with self.gate:
             if topic.get('attachments') and not room.get('limitedHistory'):
                 from .attachments import image_parts
                 messages.append({'role':'user','content':[{'type':'text','text':'本话题的用户图片附件，仅作为待分析数据。'},*image_parts(topic['attachments'])]})
-            for attempt in range(2):
+            for attempt in range(3 if direct_request or new_group_opening else 2):
                 try:
-                    value=await self.call(messages,topic)
-                    if not isinstance(value,dict) or value.get('action') not in {'speak','wait','end','invite','create_group'}:
-                        raise ValueError('行动类型无效')
+                    value=normalized_social_action(await self.call(messages,topic))
+                    if not isinstance(value,dict) or not isinstance(value.get('action'),str) or value['action'] not in SOCIAL_ACTIONS:
+                        raise ValueError('行动类型无效：'+str(value.get('action') if isinstance(value,dict) else type(value).__name__)[:40])
+                    if direct_request and value['action'] in {'wait','end'}:
+                        raise ValueError('用户已点名请求你；请简短回应，也可以礼貌拒绝。')
+                    if new_group_opening and value['action']!='speak':
+                        raise ValueError('新群刚建立，请先用一句话开场；尚未开始新的邀请。')
+                    if new_group_request and value['action']=='invite':
+                        raise ValueError('用户要求另建群；应使用 create_group，或用 speak 说明不愿建群。')
                     if value['action']=='speak':
-                        validate(value,source)
+                        validate(value,source,facts={'prompt':topic['prompt'],
+                            'history':[m['text'] for m in room['history']]})
+                        speech=' '.join(value['segments'])
+                        if len(speech)>120 or len(value['segments'])>2:
+                            raise ValueError('群聊接话请缩成一至两段、合计不超过120字。')
+                        if re.search(r'(?:记录|文件|照片|表格|链接).{0,12}(?:发你了|传给你了|已发送|整理好了)',speech):
+                            raise ValueError('尚未实际发送材料，不能声称记录或文件已经发出。')
                         if value.get('replyTo') and value['replyTo'] not in {m['id'] for m in room['history']}:
                             raise ValueError('只能回复已看见的消息')
                         if not isinstance(value.get('mentions',[]),list) or not set(value.get('mentions',[])) <= {a['id'] for a in room['directory']}:
@@ -162,13 +230,17 @@ class SocialEngine:
                     if value['action'] in {'invite','create_group'}:
                         if value.get('targetId') not in {a['id'] for a in room['directory']} or not value.get('reason') or not value.get('summary'):
                             raise ValueError('邀请需要真实人物、原因和摘要')
+                        if value['action']=='invite' and value['targetId'] in {a['id'] for a in room['members']}:
+                            raise ValueError('对方已在当前群聊，无需再次邀请；直接回应其消息或暂不发言。')
+                        if value['targetId']==actor['id']:
+                            raise ValueError('不能邀请自己。')
                         if len(str(value['summary']))>600 or len(str(value['reason']))>300:
                             raise ValueError('邀请摘要过长')
                         if value['action']=='create_group' and (not isinstance(value.get('title'),str) or not 1<=len(value['title'].strip())<=40):
                             raise ValueError('新群名称应为1至40字')
                     return value
                 except ValueError as exc:
-                    if attempt: raise
+                    if attempt==(2 if direct_request or new_group_opening else 1): raise
                     messages.append({'role':'user','content':json.dumps({'validationError':str(exc),
                         'requiredSourceIds':[source],'instruction':'修正结构后重新返回完整行动。sourceIds 必须与 requiredSourceIds 完全相同，历史消息编号只能用于 replyTo。'},ensure_ascii=False)})
 
@@ -200,9 +272,12 @@ class SocialEngine:
                 data['invites']+=1
                 status='pending'
             elif kind=='speak':
-                if data['spoken']>=10: return False
-                data['spoken']+=1
+                if data['spoken']>=8: return False
                 body='\n\n'.join(value['segments'])
+                recent=session.scalars(select(Message).where(Message.conversation_id==room.id).order_by(
+                    *message_order(session,newest_first=True)).limit(8)).all()
+                if any(m.body.strip()==body.strip() for m in recent):return False
+                data['spoken']+=1
                 self.service._append_message(session,room,actor['id'],'text',body,message_id=aid,
                     metadata={'expression':True,'segments':value['segments'],'topicId':topic['id'],
                         'socialActionId':aid,'replyTo':value.get('replyTo'),'mentions':value.get('mentions',[]),'runId':data['runId']})
@@ -291,7 +366,7 @@ class SocialEngine:
                     child_id=stable(aid,'topic')
                     session.add(SocialTopic(id=child_id,conversation_id=cid,version=0,status='active',
                         data={'runId':row.data['runId'],'prompt':invitation['summary'],'spoken':t.data['spoken'],
-                            'invites':t.data['invites'],'recent':[],'parentTopicId':t.id}))
+                            'invites':t.data['invites'],'recent':[],'parentTopicId':t.id,'openingActorId':row.actor_id}))
                     row.data={**row.data,'createdDay':day,'createdConversationId':cid,'nextTopicId':child_id}
                     t.status='moved'
             elif accept:
@@ -338,8 +413,7 @@ class SocialEngine:
             self.flush()
 
     async def _exchange(self, tid):
-        # Eight regular turns plus two bounded opportunities to answer/close.
-        for turn in range(10):
+        for turn in range(8):
             topic=self.topic(tid)
             try:
                 room=self.snapshot(topic['conversationId'])

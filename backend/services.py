@@ -15,6 +15,7 @@ from .constants import APP_META, DEFAULT_CHARACTERS, DEFAULT_SETTINGS, DEFAULT_U
 from .llm_runtime import AgentRuntime
 from .credentials import protect, reveal, public_settings
 from .memory import MemoryStore
+from .message_order import message_order
 from .models import (
     Actor,
     ActorSkill,
@@ -415,7 +416,7 @@ class AzurJuusService:
                 conversation.id: [
                     self.serialize_message(message)
                     for message in session.scalars(
-                        select(Message).where(Message.conversation_id == conversation.id,Message.speaker_id.in_(allowed_ids)).order_by(Message.created_at.asc())
+                        select(Message).where(Message.conversation_id == conversation.id,Message.speaker_id.in_(allowed_ids)).order_by(*message_order(session))
                     ).all()
                 ]
                 for conversation, _members in conversations
@@ -554,7 +555,7 @@ class AzurJuusService:
             item
             for item in (
                 session.scalars(
-                    select(Message).where(Message.conversation_id == workflow.conversation_id).order_by(Message.created_at.asc())
+                    select(Message).where(Message.conversation_id == workflow.conversation_id).order_by(*message_order(session))
                 ).all()
                 if workflow.conversation_id
                 else []
@@ -1078,6 +1079,7 @@ class AzurJuusService:
             type=message_type,
             body=body,
             metadata_json=metadata or {},
+            created_at=datetime.now(UTC),
         )
         session.add(message)
         session.flush()

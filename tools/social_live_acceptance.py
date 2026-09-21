@@ -27,6 +27,17 @@ def main():
     server,thread,url,_=start_local_server(port=0)
     report={'model':model,'scope':'真实模型社会行动协议；非自主开场或自然度人工验收','passed':False,
         'protocolHash':hashlib.sha256((ROOT/'backend/social_engine.py').read_bytes()).hexdigest()}
+    engine=server.app.state.runs.social_engine
+    original_generate=engine.generate
+    async def capture_shape(messages,settings):
+        value=await original_generate(messages,settings)
+        report.setdefault('modelActionShapes',[]).append({'keys':sorted(value) if isinstance(value,dict) else [],
+            'action':value.get('action') if isinstance(value,dict) else None,
+            'type':value.get('type') if isinstance(value,dict) else None,
+            'inviteKind':type(value.get('invite')).__name__ if isinstance(value,dict) and 'invite' in value else None,
+            'segmentsCount':len(value.get('segments',[])) if isinstance(value,dict) and isinstance(value.get('segments'),list) else 0})
+        return value
+    engine.generate=capture_shape
     def get(path):
         response=requests.get(url+path,timeout=15);response.raise_for_status();return response.json()
     def post(path,data):

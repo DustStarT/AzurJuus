@@ -4,7 +4,7 @@ import { api } from './api';
 import CharacterCard from './CharacterCard.vue';
 const props = defineProps<{actorId:string}>();
 type Source = {text:string;sourceId:string};
-type Mind = {version:number;enabled:boolean;data:{focus:Source[];commitments:Source[];mood:string};anchor:{note:string};error?:string};
+type Mind = {version:number;enabled:boolean;data:{focus:Source[];commitments:Source[];mood:string};anchor:{note:string};originalBackground?:{text:string;source:string;quote:string;sourceKind:string}[];error?:string};
 type Experience = {id:string;text:string;sourceSeq:number;kind:string;data:{userCorrection?:string}};
 const mind = ref<Mind>();
 const experiences = ref<Experience[]>([]);
@@ -55,6 +55,12 @@ onUnmounted(() => { active = false; clearTimeout(timer); window.removeEventListe
     <p v-if="!mind?.data.focus.length" class="muted">暂时没有待处理的关注事项。</p>
     <h3>记得的承诺</h3>
     <p v-for="item in mind?.data.commitments || []" :key="item.sourceId + item.text">{{ item.text }}</p>
+    <h3>原作资料理解</h3>
+    <p class="muted">模型依据剧情、聊天或动态整理的背景，不是她在本应用亲身经历的事。</p>
+    <article v-for="item in mind?.originalBackground || []" :key="item.source+item.quote" class="assignment">
+      <p>{{item.text}}</p><details><summary>查看原文依据</summary><blockquote>{{item.quote}}</blockquote><a :href="item.source" target="_blank" rel="noreferrer">打开资料</a></details>
+    </article>
+    <p v-if="!mind?.originalBackground?.length" class="muted">尚无已核对的背景整理。</p>
     <h3>关系与共同经历</h3>
     <p class="muted">这里记录的是她对同伴的认识，双方不必相同。你可以设定既有关系；设定不会伪装成真实任务经历。</p>
     <article v-for="peer in relations" :key="peer.peerId" class="assignment">

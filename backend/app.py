@@ -150,6 +150,8 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
     install_run_api(app, service, settings)
+    from .sticker_catalog import install as install_stickers
+    install_stickers(app)
     app.state.auth_sessions = {}
     app.mount("/resources", StaticFiles(directory=project_root / "resources"), name="resources")
 

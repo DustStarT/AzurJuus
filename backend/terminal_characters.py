@@ -13,7 +13,7 @@ TERMINAL = ('你通过 JUUS 远程文字终端与对方交流。只发送自己�
     '情绪通过措辞和回应体现，不通过舞台指示体现。不要复述人设标签、心理字段或规则。'
     '不要每次都称呼对方、总结、列点或追问。只有会改变当前决定的问题才问。'
     '只让当前角色名单中的人物出现，不主动介绍、提及或邀请名单外人物。港区成员同阵营默认认识且熟悉，不同阵营默认认识，无需轮流自我介绍。'
-    '可以自然使用文字表情；偶尔可发送一张内置表情贴纸，独立一段写[表情:赞同]、[表情:疑惑]、[表情:开心]或[表情:困倦]。每次最多一张，不必每次使用，不代替任务答案。')
+    '可以自然使用文字表情；偶尔可发送一张已核对的表情贴纸，独立一段写[表情:名称]。每次最多一张，不必每次使用，不代替任务答案。人物可以使用其他角色形象的表情，这不表示图片中的人物进入当前聊天。')
 CARDS = {
     '能代': ('重樱', '认真、克制，先确认影响结果的关键条件。熟悉后可以含蓄关心，不把聊天写成验收公文。',
         ['在。今天有什么事？', '嗯，这样就可以。', '我先看一下，整理好再告诉你。', '这一处你比较熟悉，帮我确认一下？', '这里我有不同意见。先别改，看看依据。', '这次是我漏看了，我来补上。']),
@@ -95,12 +95,22 @@ def context(actor_id):
     state = inspect(actor_id)
     # Existing database edits stay authoritative until the user applies a card.
     text = state['text']
+    # Keep the six examples in the editable card, but do not recite all of
+    # them on every model call. They were becoming a six-line dialogue script.
+    if state['version']==VERSION and not state['hasOverride'] and state['latest']:
+        base=state['latest']
+        text=f"{base['name']}，{base['faction']}。{base['style']}\n{base['intimacy']}"
     from .character_identity import material_context
     with session_scope() as session:
         actor=session.get(Actor,actor_id)
         text += material_context((actor.extra_json or {}).get('sourceMaterials',[]))
-        if (actor.source_character or actor.name)=='标枪':
-            text+='\n可偶尔发送官方表情[表情:标枪疑惑]表示疑惑或慌张，不代替文字回答。'
+        notes=(actor.extra_json or {}).get('originalMindNotes',[])[:4]
+        if notes:
+            text+='\n原作资料中的人物背景理解（不是本应用实际经历，可由用户纠正）：'+json.dumps(
+                [{'text':n['text'],'source':n['source']} for n in notes],ensure_ascii=False)
+        if not state['hasOverride']:
+            from .sticker_catalog import labels
+            text+='\n可选表情名（偶尔用，无须与本人形象相同）：'+ '、'.join(labels(48)+['标枪疑惑'])
     return text, state['version']
 
 

@@ -598,7 +598,7 @@ onUnmounted(() => {
                       ><time>{{ time(m.createdAt) }}</time>
                     </div>
                     <details v-if="m.type === 'task_progress' && !m.metadata?.expression"><summary>历史工作回复</summary><div class="message-bubble">{{ m.body }}</div></details>
-                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" :official-stickers="agents.some(a=>(a.sourceCharacter||a.name)==='标枪')" @reveal="speechRevealed" />
+                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
                     <a v-for="file in m.metadata?.attachments || []" :key="file.id" :href="`/api/attachments/${file.id}?conversationId=${encodeURIComponent(file.conversationId)}`" target="_blank" rel="noreferrer">附件 · {{file.name}}</a>
                   </div>
                 </article>

@@ -1,7 +1,7 @@
 """Source editions share one roster identity; sources never create actors."""
 SOURCE_EDITIONS = {'拉菲II': ('拉菲', '拉菲II'), '约克城II': ('约克城', '约克城II')}
 SOURCE_ALIASES={'拉菲':['ラフィー'],'标枪':['ジャベリン'],'绫波':['綾波'],'Z23':['ニーミ','Z23'],
-    '雅努斯':['ジェーナス'],'贾维斯':['ジャーヴィス'],'信浓':['信濃']}
+    '雅努斯':['ジェーナス'],'贾维斯':['ジャーヴィス'],'信浓':['信濃','鵗']}
 
 def source_aliases(name):
     names=source_names(name)

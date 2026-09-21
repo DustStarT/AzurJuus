@@ -25,7 +25,9 @@ def test_clear_memory_skips_pending_events_and_records_are_separate(world):
     assert client.post('/api/system/clear/memory').status_code == 200
     c.cognition.pump()
     assert not c.cognition.experiences(a)
-    assert '初识' in next(r for r in c.cognition.relationships(a) if r['peerId'] == b)['summary']
+    cleared=next(r for r in c.cognition.relationships(a) if r['peerId'] == b)
+    assert cleared['defaultRelationship']['familiarity']=='familiar'
+    assert not cleared['sharedSources']
     with session_scope() as s:
         assert s.scalar(select(func.count()).select_from(Message)) > 0
     observe(c, a, '清理之后的新约定')
@@ -57,14 +59,15 @@ def test_reset_clears_cognition_and_runtime_but_preserves_workspace_files(world,
 def test_relationship_changes_only_from_visible_shared_experience(world):
     c, _, (a, b, *_) = world
     before = next(r for r in c.cognition.relationships(a) if r['peerId'] == b)
-    assert '初识' in before['familiarity']
+    assert before['defaultRelationship']['familiarity']=='familiar'
+    assert not before['sharedSources']
     observe(c, a, '我来请你看一下草稿。', peers=[b])
     after = next(r for r in c.cognition.relationships(a) if r['peerId'] == b)
-    assert '已经有过交流' in after['familiarity'] and after['sharedSources']
+    assert after['sharedSources']
     reverse = next(r for r in c.cognition.relationships(b) if r['peerId'] == a)
-    assert '初识' in reverse['familiarity']
+    assert not reverse['sharedSources']
     c.cognition.revise(a, after['sharedSources'][0], forget=True)
-    assert '初识' in next(r for r in c.cognition.relationships(a) if r['peerId'] == b)['familiarity']
+    assert not next(r for r in c.cognition.relationships(a) if r['peerId'] == b)['sharedSources']
 
 
 def test_user_defined_relationship_is_directional_and_resettable(world):

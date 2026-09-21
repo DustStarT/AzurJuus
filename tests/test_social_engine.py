@@ -7,7 +7,7 @@ from sqlalchemy import select
 from test_cognition import world
 from backend.database import session_scope
 from backend.models import Conversation, ConversationMember, Message
-from backend.social_models import SocialAction
+from backend.social_models import SocialAction, SocialTopic
 
 
 def setup(world):
@@ -211,6 +211,13 @@ def test_group_creation_requires_acceptance_and_shares_only_summary(world):
     room=e.snapshot(cid,other['id'])
     assert room['history']==[]
     assert e.topic(tid)['prompt']=='分享种植经验，不涉及原群资料'
+    assert e.topic(tid)['openingActorId']==a['id']
+    assert e.candidates(e.snapshot(cid),e.topic(tid))[0]['id']==a['id']
+    decisions=iter([{'action':'wait'},
+        {'action':'speak','segments':['这里聊植物吧。'],'sourceIds':['opening'],'replyTo':None,'mentions':[]}])
+    async def opening(messages,settings):return next(decisions)
+    e.generate=opening
+    assert asyncio.run(e.decide(a,e.snapshot(cid,a['id']),e.topic(tid),'opening'))['action']=='speak'
     assert e.topic(t['id'])['status']=='moved'
     assert not e.c.store.get(run['id'])['assignments'] and not e.c.tokens
     # Deletion retains the tombstone and replay cannot recreate the channel.
@@ -333,6 +340,126 @@ def test_topic_relevance_changes_candidate_order(world):
     room=e.snapshot('port-hub')
     room['history']=[{'speakerId':'commander','text':'想聊聊植物和昆虫的观察。'}]
     assert e.candidates(room,t)[0]['sourceName']=='埃佛森'
+
+
+def test_group_focus_keeps_user_request_when_latest_speaker_digresses(world):
+    e,_,t,_=setup(world)
+    room=e.snapshot('port-hub')
+    room['history']=[
+        {'id':'u1','speakerId':'commander','text':'标枪一行人包括谁？'},
+        {'id':'a1','speakerId':room['members'][0]['id'],'text':'说起来我想喝茶。'},
+    ]
+    focus=e.conversation_focus(room,t)
+    assert focus['latestUser']=={'id':'u1','text':'标枪一行人包括谁？'}
+    assert focus['request']=='聊聊最近的兴趣'
+    assert focus['openQuestion'] is None
+
+
+def test_group_focus_moves_to_latest_speaker_after_first_reply(world):
+    e,_,topic,_=setup(world)
+    room=e.snapshot('port-hub')
+    room['history']=[
+        {'id':'user','speakerId':'commander','text':'最初的问题？'},
+        {'id':'peer','speakerId':room['members'][0]['id'],'text':'我看到的是另一种情况。'},
+    ]
+    focus=e.conversation_focus(room,{**topic,'spoken':1})
+    assert focus['request'] is None
+    assert focus['latestUser'] is None
+    assert focus['current']['id']=='peer'
+
+
+def test_named_group_request_gets_a_response_without_repeating_old_topic(world):
+    e,_,topic,actor=setup(world)
+    room=e.snapshot('port-hub',actor['id'])
+    room['history']=[{'id':'u1','speakerId':'commander','text':'@'+actor['name']+'，请另建一个新群。','mentions':[actor['id']]}]
+    replies=iter([{'action':'wait'},
+        {'action':'speak','segments':['好，我先确认成员。'],'sourceIds':['directed'],'replyTo':'u1','mentions':[]}])
+    calls=[]
+    async def model(messages,settings):
+        calls.append(messages)
+        return next(replies)
+    e.generate=model
+    result=asyncio.run(e.decide(actor,room,topic,'directed'))
+    assert result['action']=='speak'
+    assert len(calls)==2
+    assert 'create_group' in calls[0][0]['content']
+
+
+def test_model_action_variants_require_unambiguous_fields():
+    from backend.social_engine import normalized_social_action
+    assert normalized_social_action({'type':'create_group','targetId':'a','title':'新群'})['action']=='create_group'
+    assert normalized_social_action({'type':'json_object','targetId':'a','title':'新群',
+        'reason':'讨论','summary':'仅分享当前话题'})['action']=='create_group'
+    assert normalized_social_action({'segments':['一句话'],'sourceIds':['s']})['action']=='speak'
+    assert normalized_social_action({'type':'json_object','title':'新群'})=={'type':'json_object','title':'新群'}
+
+
+def test_social_speech_does_not_invent_measurements_or_sent_files(world):
+    e,_,topic,actor=setup(world)
+    room=e.snapshot('port-hub',actor['id'])
+    for speech in ('我测得湿度是 85%。','记录发你了。'):
+        outputs=iter([{'action':'speak','segments':[speech],'sourceIds':['fact-check']},{'action':'wait'}])
+        async def model(messages,settings):return next(outputs)
+        e.generate=model
+        result=asyncio.run(e.decide(actor,room,topic,'fact-check'))
+        assert result['action']=='wait'
+
+
+def test_legacy_messages_with_same_second_follow_insert_order(world):
+    e,_,_,a=setup(world)
+    when=datetime(2026,1,1,tzinfo=UTC)
+    with session_scope() as s:
+        s.add(Message(id='z-first',conversation_id='port-hub',speaker_id=a['id'],
+            type='text',body='第一句',created_at=when))
+        s.add(Message(id='a-second',conversation_id='port-hub',speaker_id=a['id'],
+            type='text',body='第二句',created_at=when))
+    ids=[m['id'] for m in e.snapshot('port-hub')['history']]
+    assert ids.index('z-first')<ids.index('a-second')
+    response=world[1].get('/api/workspace/load').json()['workspace']['data']['messages']['port-hub']
+    ids=[m['id'] for m in response]
+    assert ids.index('z-first')<ids.index('a-second')
+
+
+def test_group_respects_auto_reply_budget_even_if_agents_keep_asking(world):
+    e,_,t,_=setup(world)
+    calls=[]
+    async def speak(actor, room, topic, source):
+        calls.append((actor['id'],e.conversation_focus(room,topic)))
+        last=room['history'][-1] if room['history'] else None
+        return {'action':'speak','segments':[f'第{len(calls)}次接话？'],
+            'sourceIds':[source],'replyTo':last['id'] if last else None,'mentions':[]}
+    e.decide=speak
+    asyncio.run(e._exchange(t['id']))
+    assert len(calls)==8
+    assert calls[-1][1]['openQuestion']['text']=='第7次接话？'
+
+
+def test_model_retries_inviting_an_existing_member_before_commit(world):
+    e,_,t,a=setup(world)
+    peer=next(m for m in e.snapshot('port-hub')['members'] if m['id']!=a['id'])
+    outputs=iter([
+        {'action':'invite','targetId':peer['id'],'reason':'聊聊','summary':'已有的群聊'},
+        {'action':'wait'},
+    ])
+    async def decide_model(messages,settings): return next(outputs)
+    e.generate=decide_model
+    value=asyncio.run(e.decide(a,e.snapshot('port-hub',a['id']),t,'new-action'))
+    assert value['action']=='wait'
+
+
+def test_direct_question_does_not_force_repetitive_answer_after_silence(world):
+    e,_,t,_=setup(world)
+    decisions=[]
+    async def model(messages,settings):
+        request=json.loads(messages[-1]['content'])
+        decisions.append(request)
+        return {'action':'wait'}
+    e.generate=model
+    asyncio.run(e._exchange(t['id']))
+    assert 1 <= len(decisions) <= 3
+    assert all('instruction' not in decision for decision in decisions)
+    with session_scope() as s:
+        assert s.get(SocialTopic,t['id']).status=='ended'
 
 
 def test_cancelling_exchange_expires_pending_invitation(world):

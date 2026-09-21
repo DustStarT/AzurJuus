@@ -18,7 +18,9 @@ def validate(value, source_id, detailed=False, facts=None):
     if any(not isinstance(s, str) or not s.strip() for s in segments):
         raise ValueError('消息不能为空')
     text = '\n\n'.join(s.strip() for s in segments)
-    if len(re.findall(r'\[表情:',text))>1 or any(s not in {'赞同','疑惑','开心','困倦','标枪疑惑'} for s in re.findall(r'\[表情:([^\]]*)\]',text)):
+    from .sticker_catalog import catalog
+    known={'赞同','疑惑','开心','困倦','标枪疑惑',*(entry['label'] for entry in catalog())}
+    if len(re.findall(r'\[表情:',text))>1 or any(s not in known for s in re.findall(r'\[表情:([^\]]*)\]',text)):
         raise ValueError('每次最多一张目录中的表情贴纸。')
     if len(text) > (12000 if detailed else 180):
         raise ValueError('回复过长，请保留必要内容')
@@ -64,13 +66,14 @@ class ExpressionService:
     async def complete(self, messages, settings):
         from urllib.parse import urlparse
         payload={'model':settings['llmModel'], 'messages':messages, 'temperature':.75,
-            'max_tokens':1800, 'response_format':{'type':'json_object'}}
+            'max_tokens':max(256,min(4096,int(settings.get('_structuredOutputTokens',1800)))),
+            'response_format':{'type':'json_object'}}
         # This no-tool, bounded JSON call must not exhaust its budget on reasoning.
         # Hermes task execution retains its own model/reasoning configuration.
         if (urlparse(settings['llmBaseUrl']).hostname == 'api.deepseek.com'
                 and settings['llmModel'] == 'deepseek-flash'):
             payload['thinking']={'type':'disabled'}
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=max(5,min(40,int(settings.get('_structuredTimeout',15))))) as client:
             response = await client.post(settings['llmBaseUrl'].rstrip('/') + '/chat/completions',
                 headers={'Authorization':'Bearer ' + settings['llmApiKey']},
                 json=payload)

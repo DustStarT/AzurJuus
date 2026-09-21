@@ -178,6 +178,7 @@ def test_invalid_json_gets_one_repair(world):
 
 def test_group_chat_replies_are_distinct_attributed_and_idempotent(world, monkeypatch):
     c, client, _ = world
+    c.social_engine.enabled = False  # Explicit rollback path; new social engine has separate tests.
     c.expression.enabled = True
     monkeypatch.setattr(c, 'launch', lambda rid: None)
     c.settings_loader = lambda: {'llmApiKey':'synthetic'}
@@ -221,6 +222,7 @@ def test_task_answer_can_preserve_multiple_book_descriptions(world):
 
 def test_group_targeting_and_partial_failure_remain_visible(world):
     c, _, (aid,bid,*_) = world
+    c.social_engine.enabled = False
     run, actor = fixture_run(c, aid)
     run = c.store.update(run['id'],actors=[actor,{'id':bid,'name':'测试同伴'}],prompt='大家好')
     spoken=[]
