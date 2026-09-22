@@ -496,10 +496,11 @@ def install(app,c,service):
         node_ids={n['id'] for n in nodes}
         for node in nodes:
             for r in c.cognition.relationships(node['id']):
-                informative=bool(r['background'] or r['userDefined'] or r['sharedSources'])
-                same_faction=r['defaultRelationship']['familiarity']=='familiar'
-                if r['peerId'] in node_ids and (informative or same_faction):
-                    edges.append({'from':node['id'],'to':r['peerId'],**r})
+                background=[item for item in r['background'] if item.get('source')]
+                if r['peerId'] in node_ids and background:
+                    edges.append({'from':node['id'],'to':r['peerId'],
+                        'background':background,
+                        'summary':'；'.join(dict.fromkeys(item['text'].strip('。') for item in background))+'。'})
         return {'nodes':nodes,'edges':edges,'batch':batch}
     @app.post('/api/relationships/refresh-all')
     def refresh_all():

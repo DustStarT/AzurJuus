@@ -4,6 +4,7 @@ import io
 import json
 import re
 import time
+from uuid import uuid4
 from pathlib import Path
 from urllib.parse import unquote,urlparse
 
@@ -128,7 +129,7 @@ async def media(label,still=False):
                     raise ValueError('表情图像格式或尺寸无效。')
                 image.verify()
             folder.mkdir(parents=True,exist_ok=True)
-            temporary=folder/(filename+'.tmp')
+            temporary=folder/(filename+'.'+uuid4().hex+'.tmp')
             temporary.write_bytes(buffer);temporary.replace(target)
         except (httpx.HTTPError,UnidentifiedImageError,ValueError) as exc:
             raise HTTPException(503,'表情暂时无法从 Wiki 下载。') from exc
@@ -137,8 +138,9 @@ async def media(label,still=False):
         if not still_target.is_file():
             with Image.open(target) as image:
                 frame=image.convert('RGBA')
-                frame.save(still_target.with_suffix('.tmp'),'PNG')
-            still_target.with_suffix('.tmp').replace(still_target)
+                temporary=folder/(filename+'.'+uuid4().hex+'.tmp')
+                frame.save(temporary,'PNG')
+            temporary.replace(still_target)
         target=still_target;suffix='.png'
     return FileResponse(target,media_type='image/gif' if suffix=='.gif' else 'image/png',
         headers={'Cache-Control':'private, max-age=86400'})
@@ -148,7 +150,10 @@ def install(app):
     from fastapi import HTTPException
     @app.get('/api/stickers')
     def listing():
-        return {'source':SOURCE,'stickers':[{'label':e['label'],'animated':e['animated']} for e in catalog()]}
+        entries=[{'label':e['label'],'animated':e['animated']} for e in catalog()]
+        if not any(e['label']=='标枪疑惑' for e in entries):
+            entries.append({'label':'标枪疑惑','animated':True})
+        return {'source':SOURCE,'stickers':entries}
     @app.post('/api/stickers/refresh')
     async def refresh_index():
         try:entries=await refresh()

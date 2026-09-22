@@ -11,6 +11,7 @@ import { liveSpeechIds } from './speechQueue';
 import MethodPanel from "./MethodPanel.vue";
 import SettingsPanel from "./SettingsPanel.vue";
 import AttachmentPicker from './AttachmentPicker.vue';
+import StickerPicker from './StickerPicker.vue';
 import SocialControls from "./SocialControls.vue";
 import CreateGroup from './CreateGroup.vue';
 const { workspace, runs, online, error, streams, refresh, start, stop } =
@@ -119,6 +120,12 @@ const activeStreams = computed(() =>
     activeRuns.value.some((r) => key.startsWith(r.id + ":")),
   ),
 );
+const teamTask = computed(() => activeRuns.value.find(r => r.teamConversationId === activeId.value));
+const guidingTask = computed(() => teamTask.value && !['completed','cancelled'].includes(teamTask.value.status));
+function insertSticker(label:string) {
+  draft.value = draft.value.replace(/\[表情:[^\]\n]*\]/g, '').trim();
+  draft.value += (draft.value ? '\n\n' : '') + `[表情:${label}]`;
+}
 const statuses: Record<string, string> = {
   queued: "已接收",
   running: "正在执行",
@@ -689,7 +696,10 @@ onUnmounted(() => {
             </div>
             <form class="composer" @submit.prevent="send">
               <AttachmentPicker :conversation-id="activeId" v-model="attachmentIds" />
-              <div class="composer-mode">
+              <StickerPicker :key="activeId" @select="insertSticker" />
+              <p v-if="guidingTask" class="field-hint">继续发送将补充到当前协作任务。暂停中的任务可在工作抽屉继续。</p>
+              <p v-else-if="teamTask" class="field-hint">任务已结束，可以继续讨论结果。新委托请从其他会话发起。</p>
+              <div v-else class="composer-mode">
                 <button
                   type="button"
                   v-for="item in [
@@ -715,7 +725,7 @@ onUnmounted(() => {
                   v-model="draft"
                   rows="2"
                   :placeholder="
-                    mode === 'chat'
+                    guidingTask ? '补充要求、纠正方向或提供线索…' : teamTask || mode === 'chat'
                       ? '想说些什么呢…'
                       : '描述任务、文件位置和期望的结果…'
                   "
@@ -733,7 +743,7 @@ onUnmounted(() => {
               </div>
               <footer class="composer-footer">
                 <span>{{
-                  mode === "chat"
+                  guidingTask ? '引导当前任务 · 保留已有进度' : teamTask || mode === "chat"
                     ? "仅聊天 · 不操作文件"
                     : "任务内自主执行 · 重要操作集中确认"
                 }}</span

@@ -20,8 +20,11 @@ def validate(value, source_id, detailed=False, facts=None):
     text = '\n\n'.join(s.strip() for s in segments)
     from .sticker_catalog import catalog
     known={'赞同','疑惑','开心','困倦','标枪疑惑',*(entry['label'] for entry in catalog())}
-    if len(re.findall(r'\[表情:',text))>1 or any(s not in known for s in re.findall(r'\[表情:([^\]]*)\]',text)):
+    markers = re.findall(r'\[表情:([^\]\n]{1,32})\]', text)
+    if text.count('[表情:') != len(markers) or len(markers)>1 or any(s not in known for s in markers):
         raise ValueError('每次最多一张目录中的表情贴纸。')
+    if markers and any('[表情:' in s and not re.fullmatch(r'\[表情:[^\]\n]{1,32}\]', s.strip()) for s in segments):
+        raise ValueError('表情贴纸须独立一段，不混在文字中。')
     if len(text) > (12000 if detailed else 180):
         raise ValueError('回复过长，请保留必要内容')
     prose = re.sub(r'```[\s\S]*?```|`[^`]*`', '', text)
@@ -142,6 +145,7 @@ class ExpressionService:
                     policy = TERMINAL + '返回 JSON：{"segments":["短消息"],"sourceIds":["指定来源"]}。'
                     policy += ('用户明确请求详细内容，可以展开。' if detailed else '通常一两条气泡、合计30至120字，上限180字。简单确认可以更短。')
                     policy += '工作事实只能来自给定事实包；不播报调用编号、哈希，不新增成功声明。讨论保留实际观点，不代替对方同意。'
+                    policy += '事实包中的执行摘要是工作记录，不是台词模板。保留结论、依据与限制，用当前人物自己的措辞说出来，不沿用执行引擎的汇报标题和套话。人物经历与性格只影响理解和语气，除非当前话题需要，不主动重述背景。'
                     if phase == 'result':
                         policy += '直接回答 facts.request，内容来自 answers 和 summary。复核通过只是可信度背景，不能替代答案。逐项回答多文件问题，保留每项名称、主要内容及无法判断之处；必要时多写，不用客套话挤掉内容。review 是应用内审查，不是用户替你复核，不要感谢用户复核。此前闲聊不能改变这些事实。'
                     policy += '事实包为空且历史没有依据时，不得声称自己已看过、清点过、核验过文件或参与过事件。日常致谢可以自然回应，不需要盘问用户。sourceIds 必须逐字复制本次 user 消息的 sourceId，不能填写世界条目的出处或网址。'

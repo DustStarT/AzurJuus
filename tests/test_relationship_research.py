@@ -118,7 +118,8 @@ def test_research_graph_and_user_override_survive(world,monkeypatch):
     asyncio.run(c.relationship_research.tick())
     graph=client.get('/api/relationships/graph').json()
     edge=next(e for e in graph['edges'] if e['from']==a and e['to']==b)
-    assert edge['userDefined']=='用户保留的关系'
+    assert 'userDefined' not in edge and '用户保留的关系' not in edge['summary']
+    assert next(r for r in c.cognition.relationships(a) if r['peerId']==b)['userDefined']=='用户保留的关系'
     assert any(e.get('origin')=='wiki-model-interpretation' for e in edge['background'])
     with session_scope() as session:
         notes=session.get(Actor,a).extra_json['originalMindNotes']

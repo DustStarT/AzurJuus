@@ -917,7 +917,9 @@ class AzurJuusService:
         if active_agents:
             self._ensure_port_hub(session, user, active_agents)
         for agent in new_agents:
-            greeting = agent.summary or f"{agent.name} 已接入 AzurJuus，之后请多指教。"
+            from .terminal_characters import card
+            opening_card = card(agent.source_character or agent.name)
+            greeting = opening_card['examples']['招呼'] if opening_card else '我在。'
             self._ensure_greeting_message(session, user, agent, greeting)
             self._ensure_greeting_post(session, agent)
         self._sync_relationships(session, active_agents)

@@ -47,7 +47,9 @@ def test_reenable_keeps_user_edits(world):
         actor=s.get(Actor,aid)
         assert actor.name=='自定义称呼' and actor.avatar_url=='custom-avatar.png'
         assert actor.extra_json['customState']=={'value':7}
-    assert context(aid)[0]=='保留这份人设'
+        assert actor.extra_json['terminalOverride']=='保留这份人设'
+    assert context(aid)[0].startswith('保留这份人设\n')
+    assert '可选表情名' in context(aid)[0]
 
 
 def test_reconnecting_roster_preserves_prompt_and_extra(world):

@@ -64,6 +64,7 @@ export interface Assignment {
   result?: Result;
 }
 export interface Run {
+  teamConversationId?: string;
   expressionError?: string;
   id: string;
   conversationId: string;

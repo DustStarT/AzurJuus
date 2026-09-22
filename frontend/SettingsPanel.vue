@@ -47,12 +47,12 @@ async function clearData() {
   } catch(e) { error.value = (e as Error).message; }
   finally { busy.value = false; }
 }
-const selected = ref<Agent>(),
-  persona = ref("");
 const tabs = [
   { id: "connection", label: "连接与工作区", icon: "folder" },
   { id: "agents", label: "港区成员", icon: "users" },
-  { id: "world", label: "人物关系与任务", icon: "users" },
+  { id: "profiles", label: "角色资料与心智", icon: "users" },
+  { id: "world", label: "关系与世界观", icon: "users" },
+  { id: "tasks", label: "任务参与", icon: "folder" },
   { id: "appearance", label: "外观与动态", icon: "circle" },
   { id: "skills", label: "技能档案", icon: "sparkle" },
   { id: "personal", label: "我的资料与数据", icon: "users" },
@@ -65,8 +65,9 @@ async function save() {
     if (userName.value !== props.workspace.data.user.name || userAvatar.value !== (props.workspace.data.user.avatarUrl || '')) {
       await api('/api/profile', {name: userName.value, avatar: userAvatar.value});
     }
+    const { secretaryAgentId: _secretary, ...generalSettings } = settings.value;
     await api("/api/workspace/save", {
-      workspace: { settings: settings.value },
+      workspace: { settings: generalSettings },
     });
     await api("/api/window/preset", {
       preset: settings.value.resolutionPreset,
@@ -87,19 +88,6 @@ async function favorite(agent: Agent) {
   try {
     await api("/api/agents/favorite", { agentId: agent.id });
     emit("saved");
-  } catch (e) {
-    error.value = (e as Error).message;
-  }
-}
-async function applyPersona() {
-  if (!selected.value) return;
-  try {
-    await api("/api/agents/persona", {
-      agentId: selected.value.id,
-      systemPrompt: persona.value,
-    });
-    emit("saved");
-    selected.value = undefined;
   } catch (e) {
     error.value = (e as Error).message;
   }
@@ -229,17 +217,7 @@ async function connectRoster() {
             <p class="field-hint">
               角色可在此目录内读写文件。执行程序与需要确认的操作会显示在工作抽屉中。
             </p>
-            <label
-              >秘书<select v-model="settings.secretaryAgentId">
-                <option
-                  v-for="agent in workspace.data.agents"
-                  :key="agent.id"
-                  :value="agent.id"
-                >
-                  {{ agent.name }}
-                </option>
-              </select></label
-            ></template
+            </template
           >
           <template v-if="tab === 'agents'"
             ><span class="eyebrow">MEMBERS</span>
@@ -262,14 +240,6 @@ async function connectRoster() {
                 @click="favorite(agent)"
               >
                 <Icon name="heart" /></button
-              ><button
-                class="text-button"
-                @click="
-                  selected = agent;
-                  persona = agent.systemPrompt || agent.persona || '';
-                "
-              >
-                人设</button
               ><input
                 type="checkbox"
                 :value="agent.id"
@@ -277,15 +247,7 @@ async function connectRoster() {
                 :aria-label="`连接${agent.name}`"
               />
             </div>
-            <div v-if="selected" class="persona-editor">
-              <h4>{{ selected.name }} · 人设</h4>
-              <textarea v-model="persona" rows="10" /><button
-                class="soft-button"
-                @click="applyPersona"
-              >
-                应用人设
-              </button>
-            </div>
+            <details><summary>调整角色名单</summary>
             <label
               >角色名单<textarea
                 v-model="settings.characterRosterText"
@@ -297,9 +259,9 @@ async function connectRoster() {
             </p>
             <button class="soft-button" :disabled="busy" @click="connectRoster">
               根据名单连接角色
-            </button></template
+            </button></details></template
           >
-          <TerminalConfiguration v-if="tab === 'world'" @changed="emit('saved')" />
+          <TerminalConfiguration v-if="['world','profiles','tasks'].includes(tab)" :key="tab" :section="tab" @changed="emit('saved')" />
           <template v-if="tab === 'appearance'"
             ><span class="eyebrow">DISPLAY & LIFE</span>
             <h3>让港区慢下来</h3>
@@ -349,9 +311,9 @@ async function connectRoster() {
       </div>
       <footer class="settings-footer">
         <span class="muted">{{
-          saved ? "设置已保存" : "AZURJUUS / LOCAL FIRST"
+          ['world','profiles','tasks'].includes(tab) ? '本页修改请使用对应的保存按钮' : saved ? "设置已保存" : "AZURJUUS / LOCAL FIRST"
         }}</span
-        ><button class="primary-button" :disabled="busy" @click="save">
+        ><button v-if="!['world','profiles','tasks'].includes(tab)" class="primary-button" :disabled="busy" @click="save">
           <Icon :name="saved ? 'check' : 'shield'" />{{
             busy ? "保存中…" : "保存设置"
           }}

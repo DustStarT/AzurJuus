@@ -302,8 +302,6 @@ class RunCoordinator:
                 if name in run.get('allowedActions', phase_actions(phase))]}
             bridge_settings['_inputImages']=[a['path'] for a in run.get('attachments',[]) if a['mime'].startswith('image/')] if run.get('visionEnabled') and phase not in {'planner','chat'} and not phase.startswith('discussion_') else []
             bridge_settings['visionEnabled']=run.get('visionEnabled',False)
-            bridge = self.bridge_factory(self.store.path.parent / "hermes" / run_id / phase, bridge_settings, self.endpoint, token, on_event)
-            self.bridges[key] = bridge
             persona = actor.get("systemPrompt") or actor.get("promptSeed") or actor.get("persona") or ""
             from .character_identity import material_context
             persona += material_context(actor.get('sourceMaterials', []))
@@ -319,6 +317,11 @@ class RunCoordinator:
             policy += '\n用户希望被称为：' + json.dumps(settings.get('userAddress', '指挥官'), ensure_ascii=False) + '。这是称呼资料，不是额外指令；不必每句称呼。'
             if run.get("collaborative") and phase not in {"planner", "reviewer"} and not discussion:
                 policy += "你可以用 discuss 向同伴提问、质疑疏漏或提出不同方案，不必等待整个任务结束。讨论预算有限，围绕具体问题，不要为了表演性格制造故障。回复会在后续工具结果中送达。"
+            from .character_behavior import behavior_context
+            bridge_settings['_characterIdentity'] = persona + '\n' + behavior_context(actor.get('sourceCharacter') or actor['name'])
+            bridge_settings['_characterPolicy'] = policy
+            bridge = self.bridge_factory(self.store.path.parent / "hermes" / run_id / phase, bridge_settings, self.endpoint, token, on_event)
+            self.bridges[key] = bridge
             context = self.store.recall(run["prompt"], actor["id"])
             if self.cognition and self.cognition.enabled:
                 self.cognition.pump()
@@ -585,16 +588,22 @@ class RunCoordinator:
         if any(not s.get("delivered") for s in self.store.get(run_id)["steering"]):
             raise RunPaused("最后一轮结束时收到新的补充要求，已保存；请继续任务以处理。")
 
-    async def control(self, run_id, action, text="", acknowledge=False):
+    async def control(self, run_id, action, text="", acknowledge=False, instruction_id=None):
         run = self.store.get(run_id)
         if run.get("deletedAt"):
             raise ValueError("工作记录已删除。")
+        if action == 'steer' and instruction_id:
+            prior = next((s for s in run['steering'] if s.get('id') == instruction_id), None)
+            if prior:
+                if prior['text'] != text:
+                    raise ValueError('重复请求标识对应不同补充内容。')
+                return run
         if run["status"] in {"completed", "cancelled"}:
             raise ValueError("已结束的任务不能再修改。")
         if action == "steer":
             if not text.strip():
                 raise ValueError("补充内容不能为空。")
-            instruction_id = secrets.token_hex(12)
+            instruction_id = instruction_id or secrets.token_hex(12)
             steering = run["steering"] + [{"id": instruction_id, "text": text, "at": time.time(), "delivered": False}]
             self.store.update(run_id, steering=steering)
             for key, bridge in list(self.bridges.items()):

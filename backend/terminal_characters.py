@@ -108,9 +108,10 @@ def context(actor_id):
         if notes:
             text+='\n原作资料中的人物背景理解（不是本应用实际经历，可由用户纠正）：'+json.dumps(
                 [{'text':n['text'],'source':n['source']} for n in notes],ensure_ascii=False)
-        if not state['hasOverride']:
-            from .sticker_catalog import labels
-            text+='\n可选表情名（偶尔用，无须与本人形象相同）：'+ '、'.join(labels(48)+['标枪疑惑'])
+        from .sticker_catalog import labels
+        text+='\n可选表情名（按当下语气选择，可跨角色使用；避免连续重复，严肃澄清或报错时优先文字）：'+ '、'.join(labels(120)+['标枪疑惑'])
+    from .personality import expression_rules
+    text+='\n'+expression_rules()
     return text, state['version']
 
 

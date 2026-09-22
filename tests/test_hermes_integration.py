@@ -85,7 +85,9 @@ async def test_real_hermes_gateway_calls_only_host_mcp(tmp_path, monkeypatch):
         monkeypatch.setattr(sys, 'executable', str(Path(sys.executable).with_name('pythonw.exe')))
     relative_home = Path(os.path.relpath(tmp_path / "hermes", Path.cwd()))
     assert not relative_home.is_absolute()
-    bridge = HermesBridge(relative_home, {"llmModel":"azur-test", "llmBaseUrl":base + "/v1", "llmApiKey":"local-test-only"}, base + "/tool", "host-test-token", event)
+    bridge = HermesBridge(relative_home, {"llmModel":"azur-test", "llmBaseUrl":base + "/v1", "llmApiKey":"local-test-only",
+        '_characterIdentity':'CHARACTER_IDENTITY_PROBE: thoughtful and soft-spoken.',
+        '_characterPolicy':'CHARACTER_POLICY_PROBE: retain tool evidence, express the result naturally.'}, base + "/tool", "host-test-token", event)
     assert bridge.home == (tmp_path / "hermes").resolve()
     try:
         await bridge.start()
@@ -101,6 +103,12 @@ async def test_real_hermes_gateway_calls_only_host_mcp(tmp_path, monkeypatch):
         names = {t["function"]["name"] for body in seen for t in body.get("tools", [])}
         assert names == {"mcp__azurjuus__workspace"}, names
         assert any(k == "message.complete" for k, _ in events)
+        execution = next(body for body in seen if body.get('tools'))
+        system = '\n'.join(m['content'] for m in execution['messages'] if m['role']=='system')
+        assert 'CHARACTER_IDENTITY_PROBE' in system
+        assert 'CHARACTER_POLICY_PROBE' in system
+        assert 'You are Hermes Agent, built by Nous Research' not in system
+        assert 'CHARACTER_IDENTITY_PROBE' in (bridge.home / 'SOUL.md').read_text(encoding='utf-8')
     finally:
         await bridge.close()
         server.shutdown()

@@ -79,13 +79,20 @@ class HermesBridge:
         config = {
             "model": {"default": self.settings["llmModel"], "provider": "custom", "base_url": self.settings["llmBaseUrl"], "api_key": "${OPENAI_API_KEY}"},
             "agent": {"max_turns": int(self.settings.get("maxTurns", 80)),
-                'image_input_mode':'native' if self.settings.get('visionEnabled') else 'text'},
+                'image_input_mode':'native' if self.settings.get('visionEnabled') else 'text',
+                'system_prompt':self.settings.get('_characterPolicy', '')},
             "platform_toolsets": {"cli": ["mcp-azurjuus"]},
             "tools": {"tool_search": {"enabled": "off"}},
             "mcp_servers": {"azurjuus": {"command": worker_python(), "args": ["-X", "utf8", str(ROOT / "backend" / "mcp_host.py")], "env": {"AZURJUUS_TOOL_ENDPOINT": "${AZURJUUS_TOOL_ENDPOINT}", "AZURJUUS_TOOL_TOKEN": "${AZURJUUS_TOOL_TOKEN}", "AZURJUUS_TOOL_ACTIONS": "${AZURJUUS_TOOL_ACTIONS}"}, "timeout": 3600}},
             "terminal": {"backend": "local"},
             "memory": {"memory_enabled": False, "user_profile_enabled": False},
         }
+        # Hermes loads SOUL.md as its primary identity; each phase has its own home.
+        identity = self.settings.get('_characterIdentity', '')
+        if identity:
+            (self.home / 'SOUL.md').write_text(
+                '你是通过 JUUS 与用户交流的角色。Hermes 是执行引擎名称，不是你的说话人格。\n'
+                + identity + '\n' + self.settings.get('_characterPolicy', ''), encoding='utf-8')
         # JSON is valid YAML. No credentials are written to this file.
         (self.home / "config.yaml").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
         env = dict(os.environ)
