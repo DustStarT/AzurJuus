@@ -16,4 +16,4 @@ __pycache__/
 docs/
 validation/
 
-test/
+tests/
