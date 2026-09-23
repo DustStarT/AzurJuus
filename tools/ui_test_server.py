@@ -21,6 +21,40 @@ from server import create_server, serve
 
 def build_server(port=8879):
     server = create_server(host="127.0.0.1", port=port)
+    @server.app.post('/__acceptance/suspended_life')
+    async def suspended_life_fixture(payload:dict):
+        from backend.database import session_scope
+        from backend.mind_models import LifeActivity
+        runtime=server.app.state.runs.cognition.runtime
+        actor_id=payload['actorId']
+        activity_id=runtime.life.start(actor_id,{'action':'rest','purpose':'保留在线进度的合成休息'},
+            'ui-suspended-'+actor_id)
+        with session_scope() as session:
+            row=session.get(LifeActivity,activity_id)
+            row.status='suspended'
+            row.data={**row.data,'onlineSeconds':31,'reason':'应用停止后暂停；等待继续。'}
+        return {'activityId':activity_id}
+    @server.app.post('/__acceptance/work_progress')
+    async def work_progress_fixture():
+        from backend.database import session_scope
+        from backend.models import Conversation,Message
+        with session_scope() as session:
+            service=server.app.state.service
+            snapshot=service.build_snapshot(session)
+            conversation=next(v for v in snapshot['conversations'] if v['kind']=='dm')
+            actor=next(a for a in snapshot['agents'] if a['id'] in conversation['memberIds'])
+            room=session.get(Conversation,conversation['id'])
+            if not session.get(Message,'ui-visible-progress'):
+                service._append_message(session,room,actor['id'],'task_progress',
+                    '我先核对目录，再根据实际文件判断下一步。',
+                    metadata={'runId':'ui-synthetic-work','phase':'task_start','expression':True},
+                    message_id='ui-visible-progress')
+            if not session.get(Message,'ui-old-progress'):
+                service._append_message(session,room,actor['id'],'task_progress',
+                    '旧版仅供记录的原始执行文字',metadata={'runId':'ui-synthetic-work','expression':False},
+                    message_id='ui-old-progress')
+        server.app.state.runs.store.event(None,'workspace.changed',{})
+        return {'conversationTitle':conversation['title']}
     @server.app.post('/__acceptance/alignment')
     async def alignment_fixture():
         from backend.database import session_scope

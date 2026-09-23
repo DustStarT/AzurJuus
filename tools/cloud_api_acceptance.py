@@ -21,6 +21,7 @@ async def main():
         base, model, protected = db.execute('SELECT llm_base_url,llm_model,llm_api_key FROM workspace_settings LIMIT 1').fetchone()
     key = reveal(protected)
     collaborative='--collaborative' in sys.argv
+    progress_check='--progress-check' in sys.argv
     home = Path(tempfile.mkdtemp(prefix='azur-cloud-task-'))
     work = home / 'work'
     work.mkdir(parents=True)
@@ -97,11 +98,34 @@ async def main():
             assert result_message['metadata'].get('expression') is True, 'Must pass role expression, not fallback delivery'
             assert not result_message['metadata'].get('expressionFallback') and not run.get('expressionError')
             report['checks'].append('role expression succeeds without verified-result fallback')
+            if progress_check:
+                phases=[m.get('metadata',{}).get('phase','') for m in messages
+                    if m.get('metadata',{}).get('runId')==rid and m.get('metadata',{}).get('expression')]
+                assert 'task_start' in phases, phases
+                assert any(p.startswith('work_update_') for p in phases), phases
+                if collaborative:assert 'plan_notice' in phases, phases
+                report['progressPhases']=phases
+                report['checks'].append('character progress and actual team division are visible')
             if collaborative:
                 assert any(m['id']==rid+'-origin-result' for m in final['snapshot']['messages'][cid])
             events = (await client.get('/api/runtime/events')).json()['events']
             assert any(e['type'] == 'conversation.changed' and e['runId'] == rid for e in events)
             report['checks'].append('one user message, one delivered result, persisted conversation events')
+            if progress_check:
+                casual=await client.post('/api/messages/send',json={'conversationId':cid,'mode':'chat',
+                    'content':'今天想聊点轻松的：你最近喜欢什么？','requestId':uuid4().hex})
+                casual.raise_for_status()
+                chat_id=casual.json()['runId']
+                async with asyncio.timeout(150):
+                    while True:
+                        chat_run=(await client.get('/api/runs/'+chat_id)).json()['run']
+                        if chat_run['status'] in {'completed','failed'}:break
+                        await asyncio.sleep(2)
+                assert chat_run['status']=='completed',chat_run.get('error')
+                answer=(chat_run.get('result') or {}).get('summary','')
+                assert answer and not any(item in answer for item in ('api-report.txt','red=13','blue=8')),answer
+                report['casualReply']=answer
+                report['checks'].append('later casual reply does not repeat task evidence')
             report['status'] = 'passed'
             report['artifacts'] = run['artifacts']
     except Exception as exc:
@@ -110,7 +134,8 @@ async def main():
         server.shutdown()
         await asyncio.to_thread(thread.join, 20)
         server.server_close()
-        (ROOT / ('validation/cloud-api-collaborative-report.json' if collaborative else 'validation/cloud-api-report.json')).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        path=('validation/cloud-api-progress-collaborative.json' if collaborative else 'validation/cloud-api-progress-single.json') if progress_check else ('validation/cloud-api-collaborative-report.json' if collaborative else 'validation/cloud-api-report.json')
+        (ROOT / path).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
         print(json.dumps(report, ensure_ascii=False), flush=True)
     return 0 if report['status'] == 'passed' else 1
 

@@ -42,8 +42,9 @@ class Cognition:
         with session_scope() as session:
             if session.get(MindCursor, 'runtime') is None:
                 session.add(MindCursor(id='runtime', seq=self.store.state()['cursor']))
-        if self.runtime and self.runtime.enabled:
-            self.runtime.life.recover()
+        if self.runtime:
+            self.runtime.life.repair_contact_attribution()
+            if self.runtime.enabled:self.runtime.life.recover()
 
     def state(self, session, actor_id):
         actor = session.get(Actor, actor_id)
@@ -74,7 +75,7 @@ class Cognition:
                 if cursor is None:
                     session.add(MindCursor(id='runtime', seq=self.store.state()['cursor']))
                     return
-                batch = self.store.events(cursor.seq, limit=100)
+                through,batch = self.store.cognition_events(cursor.seq)
                 for event in batch:
                     for item in self.observations(event):
                         aid, kind, text, metadata, key = item
@@ -95,7 +96,8 @@ class Cognition:
                                 kind == 'speech' and (metadata.get('ownSpeech') and any(w in text for w in ('我会', '我来', '答应', '我负责', '下次', '提醒', '疏漏', '不同意'))) else 'not_needed'}))
                         data = dict(state.data)
                         if kind == 'request':
-                            data['focus'] = [*data.get('focus', []), {'text': text[:180], 'sourceId': eid, 'runId': event.get('runId')}][-6:]
+                            data['focus'] = [*data.get('focus', []), {'text': text[:180], 'sourceId': eid,
+                                'speakerId':'commander','runId': event.get('runId')}][-6:]
                         if kind == 'outcome':
                             data['focus'] = [f for f in data.get('focus', []) if f.get('runId') != event.get('runId')]
                         state.data, state.version = data, state.version + 1
@@ -103,6 +105,7 @@ class Cognition:
                             'sourceSeq': event['seq'], 'sourceId': eid, 'runId': event.get('runId'), 'version': state.version}))
                         session.flush()
                     cursor.seq = event['seq']
+                cursor.seq=through
             self.flush_outbox()
             self.last_error = None
         except Exception as exc:
@@ -124,7 +127,8 @@ class Cognition:
         elif kind == 'run.created':
             # On collaborative admission only the coordinator has observed the request.
             aid = payload['actorId']
-            yield aid, 'request', payload['prompt'], {'scope': 'personal_observation','conversationId':payload.get('conversationId','')}, payload['id'] + ':request'
+            yield aid, 'request', payload['prompt'], {'scope': 'personal_observation','mode':payload.get('mode'),
+                'speakerId':'commander','conversationId':payload.get('conversationId','')}, payload['id'] + ':request'
         elif kind == 'message.complete' and payload.get('text'):
             run = self.store.get(event['runId'])
             speaker = payload.get('actorId')
@@ -132,6 +136,7 @@ class Cognition:
             # Group messages are public observations; personal thoughts never enter this stream.
             for aid in participants:
                 yield aid, 'speech', payload['text'], {'scope': 'team_public' if run['collaborative'] else 'personal_observation',
+                    'mode':run.get('mode'),
                     'speakerId': speaker, 'ownSpeech': aid == speaker, 'peers': sorted(participants - {aid}),
                     'conversationId':run.get('conversationId','')}, payload['messageId']
         elif kind == 'run.updated' and payload.get('status') in {'completed', 'failed', 'cancelled'}:
@@ -141,7 +146,7 @@ class Cognition:
             summary = (payload.get('result') or {}).get('summary') or payload.get('error') or '任务已取消'
             for aid in participants:
                 yield aid, 'outcome', f"任务状态：{payload['status']}。{summary}", {
-                    'scope': 'team_public', 'verified': payload['status'] == 'completed',
+                    'scope': 'team_public', 'mode':'task','verified': payload['status'] == 'completed',
                     'peers': sorted(participants - {aid}),'conversationId':payload.get('conversationId','')}, payload['id'] + ':outcome:' + payload['status']
 
     def flush_outbox(self):
@@ -157,8 +162,12 @@ class Cognition:
             if before is not None:
                 query = query.where(Experience.source_seq < before)
             rows = session.scalars(query.order_by(Experience.source_seq.desc()).limit(min(max(limit, 1), 100))).all()
+            speaker_ids = {row.data.get('speakerId') for row in rows if row.data.get('speakerId') not in {None, 'commander'}}
+            speakers = dict(session.execute(select(Actor.id, Actor.name).where(Actor.id.in_(speaker_ids))).all()) if speaker_ids else {}
             return [{'id': r.id, 'sourceSeq': r.source_seq, 'runId': r.run_id, 'kind': r.kind,
-                'text': r.text, 'at': r.at, 'data': r.data} for r in rows]
+                'text': r.text, 'at': r.at, 'data': r.data,
+                'speakerName': ('指挥官' if r.data.get('speakerId') == 'commander' else
+                    speakers.get(r.data.get('speakerId'), r.data.get('speakerId')))} for r in rows]
 
     def inspect(self, actor_id):
         with session_scope() as session:
@@ -291,7 +300,8 @@ class Cognition:
             log.exception('Social cognition unavailable; participation uses public topic only')
         return result
 
-    def context(self, actor_id, query='', peers=None, social=False):
+    def context(self, actor_id, query='', peers=None, social=False, include_task_history=True,
+                task_run_id='', include_prior_task_history=False):
         if not self.enabled:
             return ''
         try:
@@ -299,6 +309,18 @@ class Cognition:
             if not state['enabled']:
                 return ''
             rows = self.experiences(actor_id, limit=100)
+            if not include_task_history or task_run_id or include_prior_task_history:
+                from .conversation_scope import task_experience
+                modes={}
+                if task_run_id:
+                    rows=[row for row in rows if not task_experience(row,self.store,modes)
+                        or row.get('runId')==task_run_id
+                        or include_prior_task_history and row['kind']=='outcome' and row['data'].get('verified')]
+                elif include_prior_task_history:
+                    rows=[row for row in rows if not task_experience(row,self.store,modes)
+                        or row['kind']=='outcome' and row['data'].get('verified')]
+                else:
+                    rows=[row for row in rows if not task_experience(row,self.store,modes)]
             # Never export task bodies into the social channel without explicit sharing.
             if social:
                 rows = [r for r in rows if r['data'].get('shareable')]
@@ -308,6 +330,8 @@ class Cognition:
             memories, budget = [], 2000
             for row in rows[:8]:
                 fragment = {'sourceId': row['id'], 'kind': row['kind'], 'observation': row['text'][:500],
+                    'speakerId':row['data'].get('speakerId'),
+                    'ownSpeech':row['data'].get('ownSpeech'),
                     'userCorrection': row['data'].get('userCorrection')}
                 size = sum(2 if ord(c) > 127 else .35 for c in json.dumps(fragment, ensure_ascii=False))
                 if size > budget:
@@ -317,9 +341,20 @@ class Cognition:
             relations = self.relationships(actor_id)
             relations = [r for r in relations if peers is None or r['peerId'] in peers]
             # Domain trust is an evidence-backed interpretation, never objective truth.
-            data = {'version': state['version'], 'focus': [] if social else state['data'].get('focus', []),
-                'commitments': [] if social else state['data'].get('commitments', [])[-5:],
-                'mood': '依据当前可见内容自然回应' if social else state['data'].get('mood'),
+            focus=[] if social else state['data'].get('focus', [])
+            if task_run_id:
+                focus=[item for item in focus if item.get('runId')==task_run_id]
+            elif not include_task_history:
+                focus=[item for item in focus if not task_experience(
+                    {'kind':'request','runId':item.get('runId'),'data':{}},self.store,modes)]
+            commitments=[] if social else state['data'].get('commitments', [])[-5:]
+            if not include_task_history or task_run_id or include_prior_task_history:
+                visible_sources={row['id'] for row in rows}
+                commitments=[item for item in commitments if item.get('sourceId') in visible_sources]
+            data = {'version': state['version'], 'focus': focus,
+                'commitments': commitments,
+                'mood': '依据当前可见内容自然回应' if social or not include_task_history or task_run_id
+                    else state['data'].get('mood'),
                 'memories': memories,
                 'originalBackground':state.get('originalBackground',[])[:4],
                 'relationships': [{'peerId':r['peerId'], 'name':r['name'],

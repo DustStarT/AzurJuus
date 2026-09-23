@@ -5,6 +5,7 @@ import logging
 import json
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -14,11 +15,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .constants import DEFAULT_USER
+from .constants import DEFAULT_SETTINGS, DEFAULT_USER
 from .database import initialize_database, session_scope
 from .llm_runtime import AgentRuntime
 from .memory import MemoryStore
-from .models import Base
+from .models import Base, ModelConnection
 from .realtime import RealtimeHub
 from .skill_runtime import SkillRuntime
 from .social_runtime import SocialRuntime
@@ -85,9 +86,9 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                         continue
                     if not app.state.runs.tasks:
                         async with maintenance_lock:
+                            await app.state.runs.relationship_research.tick()
                             if os.getenv('AZURJUUS_REFLECTION_ENABLED', '1') == '1':
                                 await mind.reflect_once(generate, lambda: bool(app.state.runs.tasks))
-                                await app.state.runs.relationship_research.tick()
                             if os.getenv('AZURJUUS_SKILL_TRIALS_ENABLED', '1') == '1':
                                 await app.state.runs.growth.tick(lambda: bool(app.state.runs.tasks))
                 except asyncio.CancelledError:
@@ -228,6 +229,65 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             workspace = service.save_workspace_payload(session, workspace_payload, actor_id=request.state.actor_id)
         return {"status": "ok", "workspace": workspace}
 
+    @app.get('/api/model/connections')
+    def api_model_connections():
+        from .model_connections import remember, recent
+        with session_scope() as session:
+            if not recent(session):
+                current=service.get_workspace(session)
+                if (current.llm_api_key or current.llm_base_url!=DEFAULT_SETTINGS['llmBaseUrl']
+                        or current.llm_model!=DEFAULT_SETTINGS['llmModel']):
+                    remember(session,current)
+            return {'connections':recent(session)}
+
+    @app.post('/api/model/connections/activate')
+    async def api_activate_model(payload:dict):
+        from .model_connections import remember
+        with session_scope() as session:
+            row=session.get(ModelConnection,str(payload.get('id') or ''))
+            if not row:raise HTTPException(404,'找不到保存的模型配置。')
+            settings_row=service.get_workspace(session)
+            remember(session,settings_row)
+            settings_row.llm_base_url=row.base_url
+            settings_row.llm_model=row.model
+            settings_row.llm_api_key=row.api_key
+            row.last_used_at=time.time()
+            workspace=service.build_workspace_payload(session)
+        await publish('workspace.changed',{'modelConnectionChanged':True})
+        return {'workspace':workspace}
+
+    @app.post('/api/model/connections/remove')
+    def api_remove_model(payload:dict):
+        from .model_connections import connection_id, normalize, recent
+        with session_scope() as session:
+            row=session.get(ModelConnection,str(payload.get('id') or ''))
+            if not row:raise HTTPException(404,'找不到保存的模型配置。')
+            current=service.get_workspace(session)
+            try:active_id=connection_id(*normalize(current.llm_base_url,current.llm_model))
+            except ValueError:active_id=''
+            if row.id==active_id:raise HTTPException(409,'当前正在使用的配置不能从记录中删除。')
+            session.delete(row)
+            session.flush()
+            return {'connections':recent(session)}
+
+    @app.post('/api/model/check')
+    async def api_check_model(payload:dict):
+        from .credentials import reveal
+        from .model_connections import connection_id, normalize, probe
+        with session_scope() as session:
+            current=service.get_workspace(session)
+            try:base_url,model=normalize(payload.get('baseUrl') or current.llm_base_url,
+                payload.get('model') or current.llm_model)
+            except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+            api_key=str(payload.get('apiKey') or '') or reveal(current.llm_api_key)
+        result=await probe(base_url,model,api_key)
+        with session_scope() as session:
+            row=session.get(ModelConnection,connection_id(base_url,model))
+            if row:
+                row.last_checked_at=time.time()
+                row.last_check='available' if result['available'] else 'unavailable'
+        return result
+
     @app.get("/api/bootstrap")
     async def api_bootstrap(request: Request):
         with session_scope() as session:
@@ -349,12 +409,21 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                     settings_row=service.get_workspace(session)
                     user=service.get_or_create_user(session)
                     retained={'llm':settings_row.llm_api_key,'tool':settings_row.tool_api_key,
+                        'model':settings_row.llm_model,'base':settings_row.llm_base_url,
+                        'provider':settings_row.llm_provider,
+                        'connections':[{'id':row.id,'base_url':row.base_url,'model':row.model,
+                            'api_key':row.api_key,'last_used_at':row.last_used_at,
+                            'last_checked_at':row.last_checked_at,'last_check':row.last_check}
+                            for row in session.query(ModelConnection).all()],
                         'extras':{k:v for k,v in (settings_row.ui_session_json or {}).get('settingsExtras',{}).items() if k.lower().endswith('apikey')},
                         'profile':{k:getattr(user,k) for k in ('name','initials','avatar_url')}}
                 workspace = service.reset_system(session, actor_id=request.state.actor_id)
                 if retained:
                     settings_row=service.get_workspace(session)
                     settings_row.llm_api_key=retained['llm'];settings_row.tool_api_key=retained['tool']
+                    settings_row.llm_model=retained['model'];settings_row.llm_base_url=retained['base']
+                    settings_row.llm_provider=retained['provider']
+                    for item in retained['connections']:session.add(ModelConnection(**item))
                     settings_row.ui_session_json={**(settings_row.ui_session_json or {}),'settingsExtras':retained['extras']}
                     user=service.get_or_create_user(session)
                     for key,value in retained['profile'].items():setattr(user,key,value)

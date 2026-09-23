@@ -12,9 +12,14 @@ def enable_character(service, name):
         raise ValueError('尚无经过整理的终端角色卡')
     from tools.blhx_character_import import load_profile, build_runtime_persona
     path = Path(__file__).resolve().parents[1]/'resources/characters'/(name+'.json')
-    if not path.is_file():
-        raise ValueError('本地资料缺失，暂不能启用')
-    spec = build_runtime_persona(load_profile(path))
+    spec={}
+    if path.is_file():
+        profile=load_profile(path)
+        from .character_identity import source_names
+        if profile.name not in source_names(name):raise ValueError('本地资料身份不匹配，请重新调查该人物资料。')
+        spec=build_runtime_persona(profile)
+    # The curated card itself is sufficient. Missing optional downloaded images
+    # must not block activation or substitute a different character's profile.
     with session_scope() as session:
         session.execute(update(WorkspaceSetting).where(WorkspaceSetting.id==1).values(updated_at=WorkspaceSetting.updated_at))
         actor = session.scalar(select(Actor).where(or_(Actor.source_character==name,
@@ -22,7 +27,7 @@ def enable_character(service, name):
         if actor is None:
             if session.get(Actor,'juus-'+name): raise ValueError('人物编号已被其他账号占用')
             actor = Actor(id='juus-'+name, kind='agent', name=name, source_character=name,
-                handle=spec['handle'], faction=base['faction'], initials=name[:2],
+                handle=spec.get('handle') or '@'+name+'.juus', faction=base['faction'], initials=name[:2],
                 persona=base['style'], tone=base['style'], summary=base['style'],
                 system_prompt=TERMINAL+render(base), tools=[], capabilities=[],
                 avatar_url=spec.get('avatarUrl'), illustration_url=spec.get('illustrationUrl'),

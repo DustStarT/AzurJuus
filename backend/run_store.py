@@ -116,6 +116,15 @@ class RunStore:
             rows = db.execute("SELECT * FROM events WHERE seq>? AND (? IS NULL OR run_id=?) ORDER BY seq LIMIT ?", (after, run_id, run_id, limit)).fetchall()
         return [{"seq": r["seq"], "runId": r["run_id"], "type": r["type"], "payload": json.loads(r["payload"]), "at": r["at"]} for r in rows]
 
+    def cognition_events(self, after=0):
+        """Project through a stable event watermark without parsing tool stream deltas."""
+        with self.connect() as db:
+            db.execute('BEGIN')
+            through=db.execute('SELECT COALESCE(MAX(seq),0) FROM events').fetchone()[0]
+            rows=db.execute("SELECT * FROM events WHERE seq>? AND seq<=? AND type IN ('run.created','run.updated','message.complete','mind.observation') ORDER BY seq",(after,through)).fetchall()
+        return through,[{"seq":r["seq"],"runId":r["run_id"],"type":r["type"],
+            "payload":json.loads(r["payload"]),"at":r["at"]} for r in rows]
+
     def call(self, call_id: str):
         with self.connect() as db:
             row = db.execute("SELECT * FROM calls WHERE id=?", (call_id,)).fetchone()

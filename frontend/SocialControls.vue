@@ -63,9 +63,9 @@ async function add(){busy.value=true;error.value='';try{
     <details><summary>全局主动交流</summary>
       <label><input type="checkbox" :checked="social.paused" :disabled="busy || !enabled"
         @change="configureGlobal({ paused: ($event.target as HTMLInputElement).checked })" />暂停后台社交与反思</label>
-      <label>每小时调用上限<input type="number" min="1" max="100" :value="social.hourlyCalls" :disabled="busy || !enabled"
-        aria-label="后台每小时调用上限" @change="configureGlobal({ hourlyCalls: Number(($event.target as HTMLInputElement).value) })" /></label>
-      <p class="muted">近一小时 {{ callsLastHour }} 次。重启不重置额度。</p>
+      <label>每小时自主后台调用上限<input type="number" min="1" max="1000" :value="social.hourlyCalls" :disabled="busy || !enabled"
+        aria-label="自主后台每小时调用上限" @change="configureGlobal({ hourlyCalls: Number(($event.target as HTMLInputElement).value) })" /></label>
+      <p class="muted">近一小时自主后台调用 {{ callsLastHour }} 次；资料调查不计入。重启不重置额度。</p>
     </details>
     <details><summary>移出成员</summary>
       <div v-for="member in members" :key="member.id" class="social-member">

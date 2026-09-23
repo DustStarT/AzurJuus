@@ -141,8 +141,9 @@ def previous_heading(node: Tag) -> str:
 def parse_table_rows(table: Tag) -> list[list[str]]:
     rows: list[list[str]] = []
     for tr in table.find_all("tr"):
+        if tr.find_parent('table') is not table:continue
         row: list[str] = []
-        for cell in tr.find_all(["th", "td"]):
+        for cell in tr.find_all(["th", "td"],recursive=False):
             value = cell_text(cell)
             if value:
                 row.append(value)
@@ -167,12 +168,14 @@ def extract_title_block(text: str) -> str | None:
     return clean_text(match.group(1)) if match else None
 
 
-def collect_images(soup: BeautifulSoup) -> tuple[str | None, list[str]]:
+def collect_images(soup: BeautifulSoup, character: str | None = None) -> tuple[str | None, list[str]]:
     avatar_url = None
     illustrations: list[str] = []
     for image in soup.find_all("img"):
         source = image.get("data-src") or image.get("src") or ""
         alt = clean_text(image.get("alt") or "")
+        if character and character not in alt:
+            continue  # Navigation portraits and other cast members are not this card.
         if not source:
             continue
         if source.startswith("//"):
@@ -303,9 +306,10 @@ def extract_section_lines(soup: BeautifulSoup, section_title: str) -> list[str]:
 
 def merge_role_info(role_info: dict[str, str], extra_sections: dict[str, list[list[str]]]) -> dict[str, str]:
     merged = {clean_text(key): strip_urls(value) for key, value in (role_info or {}).items() if clean_text(key) and strip_urls(value)}
-    for groups in (extra_sections or {}).values():
+    for heading,groups in (extra_sections or {}).items():
         for rows in groups:
-            merged.update(extract_role_info_from_rows(rows))
+            if ROLE_INFO_SECTION not in heading and not any(row==[ROLE_INFO_SECTION] for row in rows):continue
+            for key,value in extract_role_info_from_rows(rows).items():merged.setdefault(key,value)
     return merged
 
 
@@ -472,6 +476,7 @@ def extract_profile(url: str) -> CharacterProfile:
     soup, final_url = fetch_page(url)
     page_title = clean_text(soup.title.get_text(" ", strip=True)) if soup.title else "碧蓝航线角色"
     english_name = extract_title_block(page_title)
+    content=soup.select_one('.mw-parser-output') or soup.select_one('#mw-content-text') or soup
 
     tables_by_heading: dict[str, list[list[list[str]]]] = defaultdict(list)
     ship_info: dict[str, str] = {}
@@ -479,13 +484,14 @@ def extract_profile(url: str) -> CharacterProfile:
     voice_lines: dict[str, list[str]] = {}
     extra_sections: dict[str, list[list[str]]] = {}
 
-    for table in soup.find_all("table"):
+    for table in content.find_all("table"):
         rows = parse_table_rows(table)
         if not rows:
             continue
         heading = previous_heading(table)
         tables_by_heading[heading].append(rows)
-        role_info.update(extract_role_info_from_rows(rows))
+        if ROLE_INFO_SECTION in heading or any(row==[ROLE_INFO_SECTION] for row in rows):
+            for key,value in extract_role_info_from_rows(rows).items():role_info.setdefault(key,value)
 
     for heading, grouped_rows in tables_by_heading.items():
         normalized_heading = clean_text(heading)
@@ -502,8 +508,8 @@ def extract_profile(url: str) -> CharacterProfile:
                 continue
             extra_sections.setdefault(normalized_heading, []).append(rows)
 
-    avatar_url, illustrations = collect_images(soup)
     canonical_name = canonical_name_from_url(final_url) or ship_info.get("名称") or clean_text(page_title.split("-")[0])
+    avatar_url, illustrations = collect_images(content,canonical_name)
     page_name = clean_text(page_title.split("-")[0])
     aliases = unique_list([page_name]) if page_name and page_name != canonical_name else []
 
@@ -530,12 +536,8 @@ def extract_profile(url: str) -> CharacterProfile:
 
 def save_profile(profile: CharacterProfile) -> tuple[Path, Path]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    alias_stems = [
-        alias
-        for alias in (profile.aliases or [])
-        if clean_text(alias) and clean_text(alias) != clean_text(profile.name) and len(clean_text(alias)) >= 2
-    ]
-    stems = unique_list([profile.name, *alias_stems])
+    # Aliases are lookup metadata, never another character's cache filename.
+    stems = [profile.name]
     primary_json = None
     primary_prompt = None
     payload = json.dumps(asdict(profile), ensure_ascii=False, indent=2)
@@ -543,8 +545,11 @@ def save_profile(profile: CharacterProfile) -> tuple[Path, Path]:
         stem = slugify(name)
         json_path = OUTPUT_DIR / f"{stem}.json"
         prompt_path = OUTPUT_DIR / f"{stem}.prompt.md"
-        json_path.write_text(payload, encoding="utf-8")
-        prompt_path.write_text(profile.prompt_seed, encoding="utf-8")
+        from uuid import uuid4
+        for path,body in ((json_path,payload),(prompt_path,profile.prompt_seed)):
+            temporary=path.with_name(path.name+'.'+uuid4().hex+'.tmp')
+            temporary.write_text(body,encoding='utf-8')
+            temporary.replace(path)
         if primary_json is None:
             primary_json, primary_prompt = json_path, prompt_path
     return primary_json, primary_prompt
@@ -553,6 +558,9 @@ def save_profile(profile: CharacterProfile) -> tuple[Path, Path]:
 def load_profile(path: Path) -> CharacterProfile:
     payload = json.loads(path.read_text(encoding="utf-8"))
     profile = CharacterProfile(**payload)
+    canonical = canonical_name_from_url(profile.url)
+    if canonical and normalize_lookup_key(profile.name) != normalize_lookup_key(canonical):
+        raise ValueError("缓存人物名称与资料页面身份不一致。")
     return normalize_profile(profile, rebuild_prompt=True)
 
 
@@ -570,20 +578,28 @@ def find_cached_profile(target: str) -> CharacterProfile | None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     target_key = normalize_lookup_key(target)
     exact_path = OUTPUT_DIR / f"{slugify(target)}.json"
-    if exact_path.exists():
-        return load_profile(exact_path)
-
+    if exact_path.is_file():
+        try:
+            candidate=load_profile(exact_path)
+            if target_key in {normalize_lookup_key(candidate.name),
+                    normalize_lookup_key(canonical_name_from_url(candidate.url) or '')}:
+                return candidate
+        except (ValueError,TypeError,OSError):pass
+    exact=[];aliases=[]
     for path in OUTPUT_DIR.glob("*.json"):
-        profile = load_profile(path)
-        candidates = {
+        try:profile = load_profile(path)
+        except (ValueError,TypeError,OSError):continue
+        identities = {
             normalize_lookup_key(profile.name),
-            normalize_lookup_key(profile.english_name or ""),
-            normalize_lookup_key(path.stem),
             normalize_lookup_key(canonical_name_from_url(profile.url) or ""),
-            *{normalize_lookup_key(alias) for alias in profile.aliases},
         }
-        if target_key in candidates:
-            return profile
+        if target_key in identities:exact.append(profile)
+        elif target_key in {normalize_lookup_key(profile.english_name or ''),
+                            *map(normalize_lookup_key,profile.aliases)}:aliases.append(profile)
+    choices=exact or aliases
+    unique={canonical_name_from_url(p.url) or p.name:p for p in choices}
+    if len(unique)==1:return next(iter(unique.values()))
+    if len(unique)>1:raise ValueError('人物别名对应多份资料，请使用准确的原作名称。')
     return None
 
 

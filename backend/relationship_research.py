@@ -121,7 +121,7 @@ def prompt_sources(sources,aliases,activities,subject_aliases=()):
     return output
 
 
-async def research_complete(generate, reserve, messages, settings, field='sources'):
+async def research_complete(generate, messages, settings, field='sources'):
     """Recover a length-truncated JSON result by asking smaller source batches."""
     config={**settings,'_structuredOutputTokens':3200,'_structuredTimeout':35}
     async def call(batch):
@@ -139,8 +139,6 @@ async def research_complete(generate, reserve, messages, settings, field='source
     # while other valid evidence remains available for citation validation.
     width=max(1,(len(sources)+3)//4)
     for start in range(0,len(sources),width):
-        if not reserve():
-            raise ValueError('后台调用额度已用完，资料研究保持待重试。')
         shard=copy.deepcopy(messages)
         part=dict(payload)
         part[field]=sources[start:start+width]
@@ -372,9 +370,6 @@ class RelationshipResearch:
         if not cfg.get('llmApiKey'):
             self.progress(aid,token,'pending',5,'等待模型配置')
             return
-        if not self.service.background_budget():
-            self.progress(aid,token,'pending',5,'等待后台调用额度')
-            return
         try:
             async def work():
                 self.progress(aid,token,'fetching',15,'正在读取角色与官方剧情资料')
@@ -414,7 +409,7 @@ class RelationshipResearch:
                             activities,names_for(members[aid],alias_catalog))},ensure_ascii=False)}]
                 messages[0]['content']+='每批最多六条关系。另可返回 mindNotes（最多三条，text 为主体人物在该情境中的可解释关注点或交流方式，source 为资料 URL，quote 为原文逐字片段）。这类笔记是可纠正的原作背景解释，绝不是本应用真实经历或已兑现承诺。遇到一行人、她们等指代，不默认等于主角四人组。查明对应场景的参与者；可在 evidence 中提供最多四项 source/quote 交叉证据，不能仅凭常见组合补全。如材料不足，返回 followUpUrls（最多三条，只从资料 links 选择）及 unresolved（简短缺口），补查最多两轮。JUUS、动态评论及剧情是原作背景，不是应用实际经历；默认不混入恋爱、誓约情境。'
                 messages[0]['content']+='mindNotes 只记录原文支持的具体选择、反应或说话方式；单纯的身份标签、象征意象和泛泛性格总结不算心智经验。没有行为证据时返回空数组。'
-                value=await research_complete(self.c.expression.complete,self.service.background_budget,messages,cfg)
+                value=await research_complete(self.c.expression.complete,messages,cfg)
                 unresolved=list(value.get('unresolved',[])) if isinstance(value,dict) else []
                 for depth in range(2):
                     if not isinstance(value,dict):break
@@ -423,7 +418,6 @@ class RelationshipResearch:
                     discovered_links={u for s in sources for u in s.get('links',[]) if allowed(u)}
                     follow=[u for u in candidates if isinstance(u,str) and u in discovered_links and u not in checked][:3]
                     if not follow:break
-                    if not self.service.background_budget():break
                     self.progress(aid,token,'analyzing',70+depth*8,f'正在补查指代与剧情上下文（第{depth+1}轮）')
                     added=[]
                     for url in dict.fromkeys(follow):
@@ -435,7 +429,7 @@ class RelationshipResearch:
                     messages.append({'role':'user','content':json.dumps({'supplementalSources':prompt_sources(added,
                         [a for n in members.values() for a in names_for(n,alias_catalog)],activities,names_for(members[aid],alias_catalog)),
                         'instruction':'结合已读证据重新输出全部关系；无法证实的指代保持未知，不为凑数生成关系。'},ensure_ascii=False)})
-                    value=await research_complete(self.c.expression.complete,self.service.background_budget,messages,cfg,'supplementalSources')
+                    value=await research_complete(self.c.expression.complete,messages,cfg,'supplementalSources')
                     if isinstance(value,dict):unresolved.extend(value.get('unresolved',[]))
                 return validate(value,sources,members,aid,alias_catalog),validate_mind_notes(value,sources,members,aid,alias_catalog),errors,checked,unresolved
             async with asyncio.timeout(180):
@@ -511,10 +505,6 @@ def install(app,c,service):
         runtime=getattr(c.cognition,'runtime',None)
         waiting=''
         if c.tasks:waiting='前台对话或任务优先，结束后继续资料调查。'
-        elif runtime and runtime.enabled:
-            control=runtime.control()
-            if control['settings']['paused']:waiting='后台已暂停；请在自主生活设置中恢复。'
-            elif control['callsLastHour']>=control['settings']['hourlyCalls']:waiting='本小时后台模型额度已用尽，额度恢复后继续。'
         return {'nodes':nodes,'edges':edges,'batch':batch,'waitingReason':waiting}
     @app.post('/api/relationships/refresh-all')
     def refresh_all():

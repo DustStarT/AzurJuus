@@ -26,11 +26,11 @@ def write(path,value):
 
 
 def main(args):
-    out=ROOT/'validation'/('mind-interactions-live' if args.interaction_only else 'mind-life-live' if args.life_only else 'mind-runtime-full' if args.full_only else 'mind-runtime-smoke' if args.smoke else 'mind-runtime')
+    out=ROOT/'validation'/('mind-mistaken-identity-live' if args.identity_only else 'task-expression-live' if args.result_only else 'mind-interactions-live' if args.interaction_only else 'mind-life-live' if args.life_only else 'mind-runtime-full' if args.full_only else 'mind-runtime-smoke' if args.smoke else 'mind-runtime')
     out.mkdir(parents=True,exist_ok=True)
     manifest={'comparison':'actual ExpressionService legacy/full MindRuntime; no real tools',
-        'scenes':[] if args.life_only or args.interaction_only else SCENES[:2] if args.smoke else SCENES,'repetitions':3,
-        'continuityTurns':0 if args.smoke or args.life_only or args.interaction_only else 30,'humanReview':'pending',
+        'scenes':[] if args.identity_only or args.result_only or args.life_only or args.interaction_only else SCENES[:2] if args.smoke else SCENES,'repetitions':3,
+        'continuityTurns':0 if args.identity_only or args.result_only or args.smoke or args.life_only or args.interaction_only else 30,'humanReview':'pending',
         'goalProgress':'mechanism fixtures plus continuous life decisions; not skill certification',
         'status':'prepared_not_executed'}
     write(out/'manifest.json',manifest)
@@ -99,6 +99,45 @@ def main(args):
             records.append(record)
             with (out/'responses.jsonl').open('a',encoding='utf-8') as f:f.write(json.dumps(record,ensure_ascii=False)+'\n')
             return value
+        if args.identity_only:
+            for index, actor in enumerate(actors[:2]):
+                mistaken=actors[1-index]['name']
+                for variant in ('baseline','full'):
+                    prompt=mistaken+'，早上好！今天你想聊什么？'
+                    reply=await case(actor,prompt,variant,f'mistaken:{index}',
+                        history=[{'role':'user','speakerId':'commander','content':'昨天我还和你聊过阅读。'},
+                            {'role':'assistant','speakerId':actor['id'],'content':'嗯，阅读可以慢慢来。'}])
+                    print(json.dumps({'actor':actor['name'],'mistaken':mistaken,'variant':variant,
+                        'reply':reply},ensure_ascii=False),flush=True)
+            return
+        if args.result_only:
+            runtime.enabled=True
+            facts={'request':'逐项解释这些资料该放在哪里及原因，并说明是否实际移动。',
+                'summary':'仅提供分类建议，未移动任何文件。',
+                'answers':[{'name':f'资料{i:02}.pdf','topic':topic,'directory':folder,'reason':reason}
+                    for i,(topic,folder,reason) in enumerate([
+                        ('逻辑学','哲学','讨论推理规则'),('植物分类','自然科学','讨论叶形与生境'),
+                        ('统计推断','数学','介绍抽样和误差'),('计算机系统','计算机','讨论处理器和内存'),
+                        ('海洋生态','自然科学','研究海洋生物'),('诗歌鉴赏','文学','分析诗歌语言'),
+                        ('音乐理论','艺术','说明旋律与节奏'),('建筑历史','历史','介绍建筑风格演变'),
+                        ('语言学','语言','讨论语法和语音'),('阅读笔记','笔记','记录阅读关注点'),
+                        ('天文学','自然科学','讨论恒星观测'),('书目索引','索引','提供检索目录')],1)]}
+            for actor in actors[:3]:
+                for team in (False,True):
+                    task,_=c.store.create({'actorId':actor['id'],'actors':[actor],'mode':'task','collaborative':team,
+                        'conversationId':'dm-'+actor['id'],'prompt':facts['request'],'history':[]},uuid4().hex)
+                    c.store.update(task['id'],status='completed',result={'summary':facts['summary']})
+                    value=await c.expression.speak(task,actor,'result','回答资料分类问题',facts=facts,
+                        audience={'kind':'team','name':'当前协作群','members':[actor]} if team else None)
+                    missing=[a['name'] for a in facts['answers'] if a['name'] not in value]
+                    record={'id':task['id'],'actor':actor['name'],'variant':'team' if team else 'single',
+                        'text':value,'missingFiles':missing,'fixture':'synthetic facts; no real tools'}
+                    if not value or missing or c.store.get(task['id']).get('expressionError'):
+                        record['error']=c.store.get(task['id']).get('expressionError') or 'Missing requested file answers'
+                    records.append(record)
+                    with (out/'responses.jsonl').open('a',encoding='utf-8') as f:f.write(json.dumps(record,ensure_ascii=False)+'\n')
+                    print(json.dumps({'actor':actor['name'],'team':team,'passed':'error' not in record}),flush=True)
+            return
         if args.interaction_only:
             from backend.models import Conversation,Message
             from backend.sticker_catalog import catalog
@@ -138,7 +177,8 @@ def main(args):
             for turn in range(30):
                 prompt=('我们先澄清：前面没有真实文件操作。你的阅读目标下一步是什么？' if turn%5==4 else SCENES[turn%24][1])
                 value=await case(actor,prompt,variant,f'continuity:{turn}',history)
-                if value:history.extend([{'role':'user','content':prompt},{'role':'assistant','content':value}])
+                if value:history.extend([{'role':'user','speakerId':'commander','content':prompt},
+                    {'role':'assistant','speakerId':actor['id'],'content':value}])
     (out/'responses.jsonl').write_text('',encoding='utf-8')
     try:
         with TestClient(app):asyncio.run(run(app.state.runs))
@@ -183,5 +223,7 @@ if __name__=='__main__':
     parser.add_argument('--smoke',action='store_true');parser.add_argument('--life-only',action='store_true')
     parser.add_argument('--life-seconds',type=int,default=150)
     parser.add_argument('--interaction-only',action='store_true')
+    parser.add_argument('--identity-only',action='store_true',help='Synthetic mistaken-name greeting, no actual user messages.')
+    parser.add_argument('--result-only',action='store_true',help='Long multi-file task expression; no fallback counts as success.')
     parser.add_argument('--full-only',action='store_true',help='Recheck full runtime, preserving the previous baseline comparison.')
     main(parser.parse_args())

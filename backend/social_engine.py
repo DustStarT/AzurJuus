@@ -80,6 +80,11 @@ class SocialEngine:
             excluded = set(config.get('joinBoundaryIds', {}).get(actor_id, []))
             allowed_ids={'commander',*(a['id'] for a in roster)}
             visible = [m for m in messages if m.speaker_id in allowed_ids and (not joined or m.created_at.replace(tzinfo=UTC).timestamp() >= joined) and m.id not in excluded]
+            from .conversation_scope import asks_about_work
+            latest_user=next((m for m in reversed(visible) if m.speaker_id=='commander'),None)
+            if not latest_user or not asks_about_work(latest_user.body):
+                visible=[m for m in visible if m.type not in {'task','task_progress','task_notice'}
+                    and not (m.metadata_json or {}).get('guidance')]
             # Never expose another member's invitation summary or admission metadata.
             public_config = {key: config.get(key, default) for key, default in [('muted', False), ('allowInvites', True)]}
             return {'id':cid,'kind':room.kind,'title':room.title,'config':public_config,
@@ -128,6 +133,10 @@ class SocialEngine:
         last_actor=next((a for a in room['members'] if a['id']==last['speakerId']),{})
         last_name=last_actor.get('sourceName',last_actor.get('name'))
         signals={a['id']:self.participation(a, room) for a in room['members'] if a['id']!=last['speakerId']}
+        # Stable within a turn, varied across topics; retries retain attribution.
+        import random
+        lottery=random.Random(topic['id']+':'+str(topic.get('spoken',0)))
+        jitter={a['id']:lottery.random() for a in sorted(room['members'],key=lambda a:a['id'])}
         def score(a):
             explicit=a['id'] in last.get('mentions',[]) or a['name'] in last['text'] or a.get('sourceName',a['name']) in last['text']
             name=a.get('sourceName',a['name'])
@@ -140,7 +149,7 @@ class SocialEngine:
             known=any(r['from']==name and r['to']==last_name for r in book['relationships'])
             signal=signals[a['id']]
             continuity=signal['familiarity']+int(bool(signal['commitments']))
-            return (int(explicit), interest*2+int(known)+continuity-2*recent.count(a['id']), -recent.count(a['id']), a['id'])
+            return (int(explicit), interest*2+int(known)+continuity-3*recent.count(a['id'])+jitter[a['id']], -recent.count(a['id']))
         ordered=sorted([a for a in room['members'] if a['id']!=last['speakerId'] and (a['id'] not in topic.get('withdrawn',[]) or score(a)[0])],key=score,reverse=True)
         if not room['history'] and topic.get('openingActorId'):
             ordered.sort(key=lambda a:a['id']!=topic['openingActorId'])
@@ -182,10 +191,13 @@ class SocialEngine:
         new_group_request=bool(direct_request and any(word in latest['text'] for word in ('建群','新群','另开群','拉个群')))
         # Keep the speaking contract short; follow the current handoff.
         rules=(TERMINAL+'你只扮演当前人物。根据眼前消息和你可见的经历决定发言、邀请或沉默。'
+            '消息 speakerId=commander 始终是用户，当前人物由 actorId 决定；消息里叫错名字不能改变发言者身份。'
+            '用户把你认成别的角色时，可自然澄清，不要反过来把用户叫成那个角色。'
             '先判断此刻说话有没有新作用：回答、补充具体信息、不同意并说明原因、求助、开个轻松但相关的小玩笑，或自然收住。'
             '已经有人说清楚时可以 wait；不为了填满轮数轮流致谢、自我介绍、重复问题或总结。'
             '若用户刚提出具体问题，第一位有把握的成员直接回答；不知道就坦白，不绕圈追问。'
             '后续跟着最近发言和人物间实际关系走，旧问题不用每轮重答。'
+            '话题自然结束时可沉默；有眼前消息或可见经历支持的新兴趣时可以自然转题，不为继续说话而制造追问，不强制全员围绕最初题目表态。'
             '每次通常一句或两句、合计不超过120字；语气跟当前人物、对象和情境走，不照抄角色卡示例，不堆口癖和省略号。'
             '不能编造任务成果、实验读数、已整理或已发出的记录，也不能替别人说话。轻度日常可以聊，但不要把即兴设想说成可核验的数据。只能引用当前可见消息，replyTo 是被回应的消息编号。'
             '返回 JSON：action 为 speak/wait/end/invite/create_group；speak 含 segments（1至3条）、sourceIds（仅当前 sourceId）、replyTo（消息编号或 null）、mentions（人物编号数组）；'
@@ -206,10 +218,14 @@ class SocialEngine:
         runtime=getattr(self.c.cognition,'runtime',None)
         decision=None
         if runtime and runtime.active(actor['id']):
+            from .conversation_scope import asks_about_work
             topic={**topic,'_actorId':actor['id']}
             actions=['speak','invite','create_group']+([] if direct_request or new_group_opening else ['wait','end'])
-            decision=await runtime.think(actor['id'],source,json.dumps(visible_room,ensure_ascii=False),
-                mode='social',conversation_id=room['id'],public=True,background=bool(self.background.get()),actions=actions)
+            decision=await runtime.think(actor['id'],source,json.dumps({'room':visible_room,
+                'focus':self.conversation_focus(room,topic),'turn':topic.get('spoken',0),
+                'guidance':'跟随最近消息；已结束的内容无需复述。可以自然转题或沉默，不用轮流表态。'},ensure_ascii=False),
+                mode='social',conversation_id=room['id'],public=True,background=bool(self.background.get()),actions=actions,
+                include_task_memory='outcomes' if asks_about_work(current_text) else False)
             if decision['intent']['action'] in {'wait','end'}:
                 return {'action':decision['intent']['action']}
             mind=json.dumps({'frame':{k:v for k,v in decision['frame'].items() if k!='sourceIds'},

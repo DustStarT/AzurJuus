@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { api } from "./api";
 import type { Workspace, Settings, Agent } from "./types";
 import Icon from "./Icon.vue";
@@ -27,6 +27,48 @@ const speechPace = ref(localStorage.getItem('azur-speech-pace') || 'natural');
 const userName = ref(props.workspace.data.user.name);
 const userAvatar = ref(props.workspace.data.user.avatarUrl || '');
 const clearing = ref(''), confirmation = ref('');
+type ModelConnection = {id:string;baseUrl:string;model:string;apiKeyConfigured:boolean;lastUsedAt:number;lastCheck:string;lastCheckedAt?:number|null};
+type ModelCheck = {available:boolean;toolCalling:string;message:string;latencyMs?:number;httpStatus?:number};
+const modelConnections=ref<ModelConnection[]>([]), selectedModelConnection=ref('');
+const chosenConnection=computed(()=>modelConnections.value.find(item=>item.id===selectedModelConnection.value));
+const modelCheck=ref<ModelCheck|null>(null), checkingModel=ref(false), changingModel=ref(false);
+async function loadModelConnections() {
+  try { modelConnections.value=(await api<{connections:ModelConnection[]}>('/api/model/connections')).connections; }
+  catch(e) { error.value=(e as Error).message; }
+}
+async function checkModel() {
+  checkingModel.value=true; modelCheck.value=null; error.value='';
+  try { modelCheck.value=await api<ModelCheck>('/api/model/check',{
+    baseUrl:settings.value.llmBaseUrl,model:settings.value.llmModel,apiKey:settings.value.llmApiKey || ''});
+    await loadModelConnections();
+  } catch(e) { error.value=(e as Error).message; }
+  finally { checkingModel.value=false; }
+}
+async function activateModelConnection() {
+  if (!selectedModelConnection.value)return;
+  changingModel.value=true; error.value=''; modelCheck.value=null;
+  try {
+    const result=await api<{workspace:Workspace}>('/api/model/connections/activate',{id:selectedModelConnection.value});
+    settings.value.llmBaseUrl=result.workspace.settings.llmBaseUrl;
+    settings.value.llmModel=result.workspace.settings.llmModel;
+    settings.value.llmApiKey='';
+    settings.value.llmApiKeyConfigured=result.workspace.settings.llmApiKeyConfigured;
+    await loadModelConnections(); emit('saved');
+  } catch(e) { error.value=(e as Error).message; }
+  finally { changingModel.value=false; }
+}
+async function removeModelConnection() {
+  if (!selectedModelConnection.value)return;
+  changingModel.value=true; error.value='';
+  try {
+    modelConnections.value=(await api<{connections:ModelConnection[]}>('/api/model/connections/remove',
+      {id:selectedModelConnection.value})).connections;
+    selectedModelConnection.value='';
+  } catch(e) { error.value=(e as Error).message; }
+  finally { changingModel.value=false; }
+}
+watch(()=>[settings.value.llmBaseUrl,settings.value.llmModel,settings.value.llmApiKey],()=>{modelCheck.value=null;});
+onMounted(loadModelConnections);
 async function avatarFile(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
@@ -70,13 +112,15 @@ async function save() {
       await api('/api/profile', {name: userName.value, avatar: userAvatar.value});
     }
     const { secretaryAgentId: _secretary, ...generalSettings } = settings.value;
-    await api("/api/workspace/save", {
+    const response=await api<{workspace:Workspace}>("/api/workspace/save", {
       workspace: { settings: generalSettings },
     });
     await api("/api/window/preset", {
       preset: settings.value.resolutionPreset,
     });
     settings.value.llmApiKey = "";
+    settings.value.llmApiKeyConfigured=response.workspace.settings.llmApiKeyConfigured;
+    await loadModelConnections();
     localStorage.setItem("azur-reduced-motion", String(reduced.value));
     localStorage.setItem('azur-speech-pace', speechPace.value);
     document.documentElement.classList.toggle("reduced-motion", reduced.value);
@@ -165,12 +209,12 @@ async function connectRoster() {
               <option value="records">清空聊天和工作列表（保留长期记忆）</option>
               <option value="memory">忘记长期经历与关系判断（保留聊天和技能）</option>
               <option value="reset">初始化系统（清除记录、成长、技能与配置）</option>
-              <option value="reset-preserve">初始化系统（保留 API Key 与个人资料）</option>
+              <option value="reset-preserve">初始化系统（保留模型连接与个人资料）</option>
             </select></label>
             <p v-if="clearing === 'records'" class="field-hint">清空聊天正文，归档工作记录；任务审计记录仍保留，人物可能仍记得长期经历。</p>
             <p v-if="clearing === 'memory'" class="field-hint">清除长期经历、推断与承诺；当前聊天内容仍可作为上下文。要从全新状态开始，请选择初始化。</p>
             <p v-if="clearing === 'reset'" class="error-message">恢复初始角色和设置，需要重新配置模型。此操作不是磁盘安全擦除，历史备份和诊断日志仍可能保留。</p>
-            <p v-if="clearing === 'reset-preserve'" class="field-hint">保留已保存的 API Key、称呼和头像，重置其他配置、聊天、角色、目标与成长记录。模型地址和型号也恢复默认，请在再次连接前重新选择。</p>
+            <p v-if="clearing === 'reset-preserve'" class="field-hint">保留已保存的 API Key、模型地址、型号、常用模型连接、称呼和头像；重置其他配置、聊天、角色、目标与成长记录。</p>
             <template v-if="clearing">
               <label>输入“确认清理”后执行<input v-model="confirmation" autocomplete="off" /></label>
               <button class="soft-button danger" :disabled="busy || confirmation !== '确认清理'" @click="clearData">执行清理</button>
@@ -195,18 +239,27 @@ async function connectRoster() {
               >API Key
               <span
                 class="configured"
-                v-if="workspace.settings.llmApiKeyConfigured"
+                v-if="settings.llmApiKeyConfigured"
                 >已安全保存</span
               ><input
                 v-model="settings.llmApiKey"
                 type="password"
                 autocomplete="new-password"
                 :placeholder="
-                  workspace.settings.llmApiKeyConfigured
+                  settings.llmApiKeyConfigured
                     ? '留空保留现有密钥'
                     : '输入 API Key'
                 " /></label
-            ><label class="check-label"
+            >
+            <div class="inline-actions"><button class="soft-button" :disabled="checkingModel || changingModel || !settings.llmBaseUrl.trim() || !settings.llmModel.trim()" @click="checkModel">{{checkingModel ? '检查中…' : '检查模型可用性'}}</button></div>
+            <p class="field-hint">检查会向填写的接口发送简短请求，可能消耗少量 token；API Key 留空时使用当前已保存的密钥。</p>
+            <p class="field-hint">保存时若地址和型号匹配曾用配置，留空的 API Key 会恢复该配置的密钥。</p>
+            <p v-if="modelCheck" :class="modelCheck.available ? 'field-hint' : 'error-message'" role="status">{{modelCheck.message}}<span v-if="modelCheck.latencyMs"> · {{modelCheck.latencyMs}} ms</span></p>
+            <label v-if="modelConnections.length">曾用模型配置<select v-model="selectedModelConnection" aria-label="曾用模型配置"><option value="">选择已保存配置</option><option v-for="item in modelConnections" :key="item.id" :value="item.id">{{item.model}} · {{item.baseUrl}} {{item.apiKeyConfigured ? '· 已存密钥' : ''}}</option></select></label>
+            <p v-if="chosenConnection?.lastCheckedAt" class="field-hint">上次检查：{{chosenConnection.lastCheck==='available' ? '可用' : '未通过'}} · {{new Date(chosenConnection.lastCheckedAt*1000).toLocaleString()}}。切换前可再次检查。</p>
+            <div v-if="modelConnections.length" class="inline-actions"><button class="soft-button" :disabled="!selectedModelConnection || changingModel" @click="activateModelConnection">切换到所选配置</button><button class="text-button" :disabled="!selectedModelConnection || changingModel" @click="removeModelConnection">删除记录</button></div>
+            <p v-if="modelConnections.length" class="field-hint">保存设置会自动记住当前模型连接。切换会立即生效；密钥只保存在本机，不显示在列表中。</p>
+            <label class="check-label"
               ><input
                 type="checkbox"
                 v-model="settings.visionEnabled"

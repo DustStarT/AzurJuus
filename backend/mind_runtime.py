@@ -64,8 +64,26 @@ class MindRuntime:
                 self.revision += 1
             cfg = dict(row.data['settings'])
             calls = s.scalars(select(MindCall).where(MindCall.at > time.time()-3600)).all()
+            background_calls=[r for r in calls if r.data.get('background')]
+            # Research is queued by the user or character configuration. It is
+            # interruptible background work, but does not spend the autonomous
+            # life/reflection allowance (including records from older versions).
+            limited_calls=[r for r in background_calls if r.kind!='research']
+            stages={}
+            for call in background_calls:
+                stage=stages.setdefault(call.kind,{'kind':call.kind,'calls':0,'failures':0,'tokens':0})
+                stage['calls']+=1
+                stage['failures']+=call.data.get('status')=='failed'
+                stage['tokens']+=(call.data.get('usage') or {}).get('total_tokens',0) or 0
+            from .local_clock import snapshot as current_time
+            queue=s.get(MindControl,'queue')
             return {'enabled':self.enabled, 'settings':cfg,
-                'callsLastHour':sum(bool(r.data.get('background')) for r in calls),
+                'time':current_time(),'scheduled':(queue.data.get('wake',{}) if queue else {}),
+                'callsLastHour':len(limited_calls),
+                'backgroundCallsLastHour':len(background_calls),
+                'backgroundFailuresLastHour':sum(r.data.get('status')=='failed' for r in background_calls),
+                'backgroundTokensLastHour':sum((r.data.get('usage') or {}).get('total_tokens',0) or 0 for r in background_calls),
+                'backgroundStages':sorted(stages.values(),key=lambda stage:stage['kind']),
                 'failuresLastHour':sum(r.data.get('status')=='failed' for r in calls),
                 'tokensLastHour':sum((r.data.get('usage') or {}).get('total_tokens',0) or 0 for r in calls),
                 'latencySeconds':sum(r.data.get('latencySeconds',0) for r in calls),
@@ -75,8 +93,9 @@ class MindRuntime:
         self.revision += 1
         self.life.suspend_busy()
 
-    def background_blocked(self, revision=None):
-        return (self.c.shutting_down or bool(self.c.tasks) or self.control()['settings']['paused']
+    def background_blocked(self, revision=None, respect_pause=True):
+        return (self.c.shutting_down or bool(self.c.tasks)
+                or respect_pause and self.control()['settings']['paused']
                 or revision is not None and self.revision != revision)
 
     async def call(self, actor_id, kind, payload, schema=None, background=False, revision=None, messages=None, generator=None, settings=None, validator=None):
@@ -90,7 +109,8 @@ class MindRuntime:
                 else:payload={**payload,'validationCorrection':correction}
 
     async def _call_once(self, actor_id, kind, payload, schema=None, background=False, revision=None, messages=None, generator=None, settings=None, validator=None):
-        if background and self.background_blocked(revision):
+        limited = background and kind!='research'
+        if background and self.background_blocked(revision, respect_pause=limited):
             raise MindInterrupted('后台认知已让出前台。')
         cfg = settings or self.c.settings_loader()
         if not cfg.get('llmApiKey') and not cfg.get('llmBaseUrl','').startswith(('http://127.0.0.1','http://localhost')):
@@ -101,15 +121,15 @@ class MindRuntime:
             # SQLite writer serialization makes quota reservation atomic.
             s.execute(update(MindControl).where(MindControl.id=='life').values(id='life'))
             settings = s.get(MindControl,'life').data['settings']
-            if background:
+            if limited:
                 used = s.scalars(select(MindCall).where(MindCall.at > time.time()-3600)).all()
-                if settings['paused'] or sum(bool(r.data.get('background')) for r in used) >= settings['hourlyCalls']:
+                if settings['paused'] or sum(bool(r.data.get('background')) and r.kind!='research' for r in used) >= settings['hourlyCalls']:
                     raise MindInterrupted('后台调用额度已用尽，保留计划。')
             s.add(MindCall(id=call_id, actor_id=actor_id, kind=kind, at=time.time(),
                 data={'background':background,'status':'running'}))
         rules = {
             'profile':'从人物背景编译可纠正的作者解释。身份与核心价值稳定；保留例外和不确定性，不能把人物背景当作真实工具能力。',
-            'understand':'理解当前可见事件。区分发生的事实、角色猜测和未知。结合价值与目标评价事件；情绪须有对象与原因，不复述身世。不输出长篇内心独白。',
+            'understand':'理解当前可见事件。区分发生的事实、角色猜测和未知。消息的发言者只由 speakerId 判定；记忆中 ownSpeech 为 false 表示听到别人说话，不是本人自述，话语也不证明其内容已经发生。commander 是用户，用户称呼了某角色不等于用户就是该角色，也不改变当前 actorId。结合价值与目标评价事件；情绪须有对象与原因，不复述身世。不输出长篇内心独白。',
             'decide':'根据认知快照选择一个允许的行动。保留人物分歧与方法差异，承诺后的工作必须可靠。只有相关来源才能支持目标。不要代替他人同意，不创造工具能力。goal 只在需要新长期目标时提出，否则为 null。goalUpdate 仅在已有目标的 evidence 支持下一步或状态改变时提出；使用该目标已有 evidence 中的编号，不能把模拟活动当现实能力认证。',
             'reflect':'从给定经历提炼有限信念、关系或习惯候选。说过不等于发生过；一次事件不形成永久人格。来源与反证均必须存在。不得重写核心身份、价值或授予技能。commitments 只逐字引用当前角色自己说过的明确承诺，并给出对应经历 sourceId；不能把别人的话或背景设定当成自己的承诺。',
             'express':'按给定人物意图生成自然的远程文字消息。只输出 JSON：segments 为1至3段文字，sourceIds 原样复制指定来源。最多一张已知表情且独立成段。不泄露未分享的私事，不复述心理字段。只陈述允许公开的事实，不声称真实工具成功。',
@@ -130,7 +150,7 @@ class MindRuntime:
                 '_structuredOutputTokens':cfg.get('_structuredOutputTokens',2400)}))
             while not task.done():
                 await asyncio.wait({task}, timeout=.2)
-                if background and self.background_blocked(revision):
+                if background and self.background_blocked(revision, respect_pause=limited):
                     raise MindInterrupted('前台消息打断了后台推理。')
                 if time.monotonic()-started > 40:
                     raise TimeoutError('认知模型超时，状态未提交。')
@@ -159,6 +179,11 @@ class MindRuntime:
             anchor = card['text']
             sources = {'profile:'+actor_id:anchor,
                 'author:'+actor_id:behavior_context(actor.source_character or actor.name)}
+            from .character_identity import source_names
+            allowed_names=set(source_names(actor.source_character or actor.name))
+            for item in (actor.extra_json or {}).get('sourceMaterials',[]):
+                if item.get('name') in allowed_names:
+                    sources['edition:'+item['name']]=json.dumps(item,ensure_ascii=False)
             for i,item in enumerate((actor.extra_json or {}).get('originalMindNotes',[])):
                 sources['background:'+str(i)] = item.get('text','')
             digest = key(json.dumps(sources,sort_keys=True,ensure_ascii=False))
@@ -245,7 +270,7 @@ class MindRuntime:
         state=self.control()
         return not self.background_blocked() and state['callsLastHour']<state['settings']['hourlyCalls']
 
-    def snapshot(self, actor_id, prompt, source, conversation_id='', public=False):
+    def snapshot(self, actor_id, prompt, source, conversation_id='', public=False, task_run_id='', include_task_memory=True):
         self.mind.pump()
         profile=self.profile(actor_id)
         state=self.mind.inspect(actor_id)
@@ -261,6 +286,22 @@ class MindRuntime:
         if public:
             rows=[r for r in rows if r['data'].get('shareable') or
                 conversation_id and r['data'].get('conversationId')==conversation_id]
+        if task_run_id:
+            # A new task does not inherit earlier requests or result reports.
+            # Explicit follow-ups may cite prior verified outcomes.
+            from .conversation_scope import asks_about_work
+            prior_outcomes=asks_about_work(prompt)
+            rows=[r for r in rows if r['kind'] not in {'request','speech','simulation','outcome'}
+                or r['runId']==task_run_id or prior_outcomes and r['kind']=='outcome']
+        elif include_task_memory=='outcomes':
+            from .conversation_scope import task_experience
+            modes={}
+            rows=[r for r in rows if not task_experience(r,self.mind.store,modes)
+                or r['kind']=='outcome' and r['data'].get('verified')]
+        elif not include_task_memory:
+            from .conversation_scope import task_experience
+            modes={}
+            rows=[r for r in rows if not task_experience(r,self.mind.store,modes)]
         goal_text=' '.join(g['title']+' '+g.get('nextStep','') for g in goals)
         rows.sort(key=lambda r:(bool(r['data'].get('userCorrection')),
             sum(t in r['text'].lower() for t in terms)+int(any(t in r['text'] and t in goal_text for t in terms)),
@@ -271,6 +312,8 @@ class MindRuntime:
             if len(grouped[category])>=5:continue
             grouped[category].append({'id':r['id'],'text':r['text'][:500],
                 'correction':r['data'].get('userCorrection'),'sourceKind':r['data'].get('sourceKind',r['kind']),
+                'speakerId':r['data'].get('speakerId'),
+                'ownSpeech':r['data'].get('ownSpeech'),
                 'at':r['at'],'sessionId':r['runId'] or r['data'].get('conversationId') or r['data'].get('eventId')})
             allowed.add(r['id'])
         with session_scope() as s:
@@ -290,17 +333,37 @@ class MindRuntime:
                 'background':relation.get('background',[]),'userDefined':relation.get('userDefined'),
                 'defaultRelationship':relation.get('defaultRelationship')})
         profile_summary={k:v for k,v in profile['interpretation'].items()}
-        return {'actorId':actor_id,'version':state['version'],'profileVersion':profile['version'],
+        emotion=state['data'].get('emotion')
+        if emotion and include_task_memory is not True:
+            event_source=str(emotion.get('eventId','')).split(':',1)[0]
+            if event_source.startswith('run-'):
+                try:
+                    if self.mind.store.get(event_source).get('mode')!='chat':emotion=None
+                except KeyError:pass
+        from .local_clock import snapshot as current_time
+        return {'actorId':actor_id,'version':state['version'],'profileVersion':profile['version'],'time':current_time(),
             'profile':profile_summary,'background':dict(list(profile['sources'].items())[:5]),
             'memory':grouped,'goals':goals if not public else [],
             'relationships':relationships,
-            'emotion':state['data'].get('emotion') if not public or set(state['data'].get('emotion',{}).get('sourceIds',[]))<=allowed else None,
+            'emotion':emotion if not public or set((emotion or {}).get('sourceIds',[]))<=allowed else None,
             'mood':{k:v for k,v in (state['data'].get('mindMood') or {}).items() if k in {'text','intensity'}},
             'current':{'id':source,'text':prompt},'allowedSources':sorted(allowed),
             'conversationId':conversation_id}
 
     async def think(self, actor_id, source, prompt, *, mode='chat', conversation_id='', public=False,
-                    background=False, actions=None):
+                    background=False, actions=None, task_run_id='', include_task_memory=None):
+        for attempt in range(3):
+            try:
+                return await self._think_once(actor_id,source,prompt,mode=mode,conversation_id=conversation_id,
+                    public=public,background=background,actions=actions,task_run_id=task_run_id,
+                    include_task_memory=include_task_memory)
+            except MindInterrupted as exc:
+                # A newly projected observation invalidates the snapshot. Re-read
+                # facts and decide again; never publish an old decision as current.
+                if background or attempt==2 or '人物已收到新事件' not in str(exc):raise
+
+    async def _think_once(self, actor_id, source, prompt, *, mode='chat', conversation_id='', public=False,
+                    background=False, actions=None, task_run_id='', include_task_memory=None):
         if not self.active(actor_id):return None
         queued=time.monotonic()
         async with self.locks[actor_id]:
@@ -308,7 +371,9 @@ class MindRuntime:
             revision=self.revision
             await self.compile_profile(actor_id,background,revision)
             did=key(actor_id,source,mode)
-            snap=self.snapshot(actor_id,prompt,source,conversation_id,public)
+            snap=self.snapshot(actor_id,prompt,source,conversation_id,public,
+                task_run_id=task_run_id or (source.split(':',1)[0] if mode=='task' else ''),
+                include_task_memory=include_task_memory if include_task_memory is not None else mode not in {'chat','social'})
             with session_scope() as s:
                 previous=s.get(MindDecision,did)
                 if (previous and previous.status=='committed' and previous.data.get('profileVersion')==snap['profileVersion']
@@ -340,6 +405,9 @@ class MindRuntime:
                         goal=next((g for g in snap['goals'] if g['id']==value.goalUpdate.goalId),None)
                         if not goal or not set(value.goalUpdate.evidenceIds)<=set(goal.get('evidence',[])):
                             raise ValueError('goalUpdate.evidenceIds 只能使用该目标已有 evidence；证据不足时 goalUpdate 为 null，仍可选择允许的活动。')
+                        if (value.goalUpdate.status!='active' and value.goalId==value.goalUpdate.goalId
+                                and value.action in {'read','practice','rest','reflect','invite','continue'}):
+                            raise ValueError('不能为本次即将结束或暂停的目标启动活动；若是独立休息或整理，goalId 留空，否则先保持目标 active。')
                 frame=await self.call(actor_id,'understand',snap,MindFrame,background,revision,validator=validate_frame)
                 decision=await self.call(actor_id,'decide',{'snapshot':snap,'frame':frame.model_dump(),
                     'allowedActions':allowed_actions,'mode':mode},DecisionIntent,background,revision,validator=validate_decision)
@@ -392,35 +460,38 @@ class MindRuntime:
         self.revision+=1
         with session_scope() as s:
             s.execute(update(MindControl).where(MindControl.id=='life').values(id='life'))
-            memories=s.scalars(select(Experience).where(Experience.actor_id==actor_id)).all()
-            invalid={source_id} if source_id else set()
-            while True:
-                children={r.id for r in memories if any(invalid.intersection(v['sourceIds']+v.get('counterSourceIds',[])) for v in r.data.get('derived',[]))}
-                if children<=invalid:break
-                invalid|=children
-            invalid_decisions=set()
-            decisions=s.scalars(select(MindDecision).where(MindDecision.actor_id==actor_id)).all()
-            for row in decisions:
-                if reset or invalid.intersection(row.data.get('sourceIds',[])):
-                    row.status='invalidated';invalid_decisions.add(row.id)
-            for row in memories:
-                derived=row.data.get('derived',[])
-                if reset or any(invalid.intersection(v['sourceIds']+v.get('counterSourceIds',[])) for v in derived):
-                    row.data={**row.data,'derived':[], 'mindReflection':'pending'}
-            source=s.get(Experience,source_id) if source_id else None
-            event_id=source.data.get('eventId') if source else None
-            paused_goals=set()
-            for goal in s.scalars(select(PersonalGoal).where(PersonalGoal.actor_id==actor_id)):
-                if reset or invalid.intersection(goal.data.get('sourceIds',[])) or event_id and event_id in goal.data.get('evidence',[]):
-                    goal.status='paused';goal.data={**goal.data,'reason':'来源已撤回，等待重新确认。','evidence':[]}
-                    paused_goals.add(goal.id)
-            for activity in s.scalars(select(LifeActivity)):
-                if (actor_id in activity.data['participants'] and activity.status in {'active','invited','suspended'}
-                        and (reset or activity.data.get('decisionId') in invalid_decisions or activity.data.get('goalId') in paused_goals)):
-                    activity.status='cancelled' if reset else 'suspended';activity.data={**activity.data,'reason':'人物状态已重置或纠正，需重新决定。'}
-            state=self.mind.state(s,actor_id)
-            if reset or invalid.intersection(state.data.get('emotion',{}).get('sourceIds',[])):
-                state.data={k:v for k,v in state.data.items() if k not in {'emotion','mindMood'}}
+            self.invalidate_in_session(s, actor_id, source_id, reset)
+
+    def invalidate_in_session(self, s, actor_id, source_id=None, reset=False):
+        memories=s.scalars(select(Experience).where(Experience.actor_id==actor_id)).all()
+        invalid={source_id} if source_id else set()
+        while True:
+            children={r.id for r in memories if any(invalid.intersection(v['sourceIds']+v.get('counterSourceIds',[])) for v in r.data.get('derived',[]))}
+            if children<=invalid:break
+            invalid|=children
+        invalid_decisions=set()
+        decisions=s.scalars(select(MindDecision).where(MindDecision.actor_id==actor_id)).all()
+        for row in decisions:
+            if reset or invalid.intersection(row.data.get('sourceIds',[])):
+                row.status='invalidated';invalid_decisions.add(row.id)
+        for row in memories:
+            derived=row.data.get('derived',[])
+            if reset or any(invalid.intersection(v['sourceIds']+v.get('counterSourceIds',[])) for v in derived):
+                row.data={**row.data,'derived':[], 'mindReflection':'pending'}
+        source=s.get(Experience,source_id) if source_id else None
+        event_id=source.data.get('eventId') if source else None
+        paused_goals=set()
+        for goal in s.scalars(select(PersonalGoal).where(PersonalGoal.actor_id==actor_id)):
+            if reset or invalid.intersection(goal.data.get('sourceIds',[])) or event_id and event_id in goal.data.get('evidence',[]):
+                goal.status='paused';goal.data={**goal.data,'reason':'来源已撤回，等待重新确认。','evidence':[]}
+                paused_goals.add(goal.id)
+        for activity in s.scalars(select(LifeActivity)):
+            if (actor_id in activity.data['participants'] and activity.status in {'active','invited','suspended'}
+                    and (reset or activity.data.get('decisionId') in invalid_decisions or activity.data.get('goalId') in paused_goals)):
+                activity.status='cancelled' if reset else 'suspended';activity.data={**activity.data,'reason':'人物状态已重置或纠正，需重新决定。'}
+        state=self.mind.state(s,actor_id)
+        if reset or invalid.intersection((state.data.get('emotion') or {}).get('sourceIds',[])):
+            state.data={k:v for k,v in state.data.items() if k not in {'emotion','mindMood'}}
 
     def traces(self, actor_id, before=None, limit=20):
         with session_scope() as s:

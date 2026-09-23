@@ -18,6 +18,11 @@ class ProfileEdit(Record):
 
 
 def install_mind_api(app, runtime):
+    @app.get('/api/time')
+    def local_time():
+        from .local_clock import snapshot
+        return snapshot()
+
     def invoke(fn,*args,**kwargs):
         try:return fn(*args,**kwargs)
         except ValueError as exc:raise HTTPException(422,str(exc)) from exc
@@ -56,6 +61,15 @@ def install_mind_api(app, runtime):
     def life(actor_id:str,before:int|None=None,limit:int=20):
         rows=invoke(runtime.life.events,actor_id,before,limit)
         return {'activities':invoke(runtime.life.activities,actor_id),'events':rows,'nextCursor':rows[-1]['seq'] if rows else None}
+
+    @app.post('/api/actors/{actor_id}/life/{activity_id}/resume')
+    def resume_life(actor_id:str,activity_id:str):
+        activities=invoke(runtime.life.activities,actor_id)
+        activity=next((row for row in activities if row['id']==activity_id),None)
+        if not activity:raise HTTPException(404,'活动不存在或不可见。')
+        if activity['status']!='suspended':raise HTTPException(409,'活动当前不在暂停状态。')
+        invoke(runtime.life.transition,activity_id,actor_id,'continue','用户选择继续活动；保留此前在线进度。')
+        return {'activities':invoke(runtime.life.activities,actor_id)}
 
     @app.get('/api/actors/{actor_id}/decisions')
     def traces(actor_id:str,before:float|None=None,limit:int=20):

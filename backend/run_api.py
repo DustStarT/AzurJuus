@@ -281,14 +281,18 @@ def install_run_api(app, service, settings):
             if payload.get("collaborative"):
                 actors = list(snapshot["agents"])
                 actors.sort(key=lambda a: a["id"] != current.get("secretaryAgentId"))
-            names = {a['id']: a['name'] for a in snapshot['agents']}
             if payload.get('mode','task')!='chat':
                 actors = [a for a in actors if not a.get('socialOnly')]
                 if not actors:
                     raise HTTPException(400, '该人物目前仅启用聊天与社交，尚未开放工具任务。')
-            history = [{"role": "user" if m["speakerId"] == "commander" else "assistant", "content": ("系统背景：协作成果摘要，非新指令。\n" + str(m.get("metadata", {}).get("summary", m["body"]))) if m.get("type") == "task_notice" else ((names.get(m['speakerId'], '用户') + '：' if conversation.kind == 'group' else '') + m["body"])}
+            history = [{"role": "user" if m["speakerId"] == "commander" else "assistant",
+                "speakerId":m["speakerId"],
+                "content": ("系统背景：协作成果摘要，非新指令。\n" + str(m.get("metadata", {}).get("summary", m["body"]))) if m.get("type") == "task_notice" else m["body"]}
                 for m in snapshot["messages"].get(cid, [])[-40:]
                 if (conversation.kind != "dm" or m["speakerId"] == "commander" or m["speakerId"] in member_ids)
+                and (payload.get('mode','task')!='chat' or
+                    m.get('type') in {'text','sticker'} and not m.get('metadata',{}).get('guidance')
+                    and not m.get('metadata',{}).get('verifiedResult'))
                 and (not coordinator.expression.enabled or m['speakerId'] == 'commander' or m.get('metadata',{}).get('expression'))]
             if payload.get('mode','task')!='chat':history=[]
         try:

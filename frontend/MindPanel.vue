@@ -8,7 +8,7 @@ const views = [{id:'background',label:'背景'},{id:'state',label:'当前状态'
 const props = defineProps<{actorId:string}>();
 type Source = {text:string;sourceId:string};
 type Mind = {version:number;enabled:boolean;data:{focus:Source[];commitments:Source[];mood:string;emotion?:{name:string;target:string;cause:string};mindMood?:{text:string}};anchor:{note:string};originalBackground?:{text:string;source:string;quote:string;sourceKind:string}[];error?:string};
-type Experience = {id:string;text:string;sourceSeq:number;kind:string;data:{userCorrection?:string}};
+type Experience = {id:string;text:string;sourceSeq:number;kind:string;speakerName?:string|null;data:{speakerId?:string;ownSpeech?:boolean;userCorrection?:string}};
 const mind = ref<Mind>();
 const experiences = ref<Experience[]>([]);
 const relations = ref<{peerId:string;name:string;summary:string;userDefined?:string;background?:unknown[];sharedSources?:unknown[];defaultRelationship?:{familiarity:string}}[]>([]);
@@ -38,6 +38,13 @@ async function more() {
     experiences.value.push(...page.experiences.filter(x => !experiences.value.some(y => y.id === x.id)));
     cursor.value = page.nextCursor;
   } catch(e) { error.value = (e as Error).message; }
+}
+function experienceLabel(item:Experience) {
+  if (item.kind !== 'speech') return '';
+  if (item.data.speakerId) return item.data.speakerId === props.actorId
+    ? '本人发言' : `听到 ${item.speakerName || item.data.speakerId} 发言`;
+  if (item.data.ownSpeech) return '本人发言';
+  return '发言记录（发言者未标明）';
 }
 function changed(event:Event) {
   if ((event as CustomEvent).detail?.actorId !== props.actorId) return;
@@ -82,9 +89,10 @@ onUnmounted(() => { active = false; clearTimeout(timer); window.removeEventListe
         <button class="primary-button">保存关系</button>
       </form>
     </article>
-    </template><template v-if="view==='experiences'"><h3>个人经历</h3>
-    <p class="muted">删除聊天只隐藏聊天记录；忘记经历会同时排除相关判断和承诺，保留任务审计事实。</p>
+    </template><template v-if="view==='experiences'"><h3>个人经历与见闻</h3>
+    <p class="muted">这里包含本人的行动，以及在可见对话中听到的消息；听到别人发言不代表本人说过这句话。删除聊天只隐藏聊天记录；忘记经历会同时排除相关判断和承诺，保留任务审计事实。</p>
     <article v-for="item in experiences" :key="item.id" class="assignment">
+      <small v-if="experienceLabel(item)" class="muted">{{ experienceLabel(item) }}</small>
       <p>{{ item.text }}</p><p v-if="item.data.userCorrection">你的纠正：{{ item.data.userCorrection }}</p>
       <button class="text-button" @click="editing = item.id; correction = item.data.userCorrection || ''">纠正理解</button>
       <button class="text-button" @click="action(`experiences/${item.id}/forget`)">忘记这段经历</button>

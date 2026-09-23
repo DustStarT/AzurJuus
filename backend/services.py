@@ -25,6 +25,7 @@ from .models import (
     ConversationMember,
     MemoryChunk,
     Message,
+    ModelConnection,
     SkillRun,
     SkillProposal,
     SocialComment,
@@ -321,6 +322,9 @@ class AzurJuusService:
         settings_extras = self._workspace_settings_extras(workspace)
         settings = workspace_payload.get("settings") if isinstance(workspace_payload, dict) else None
         if isinstance(settings, dict):
+            from .model_connections import remember
+            if workspace.llm_api_key:
+                remember(session,workspace)
             workspace.resolution_preset = str(settings.get("resolutionPreset") or workspace.resolution_preset)
             workspace.max_connected_agents = int(settings.get("maxConnectedAgents") or workspace.max_connected_agents)
             workspace.connected_agent_ids = [str(item) for item in settings.get("connectedAgentIds") or workspace.connected_agent_ids]
@@ -328,6 +332,14 @@ class AzurJuusService:
             workspace.llm_provider = str(settings.get("llmProvider") or workspace.llm_provider)
             workspace.llm_model = str(settings.get("llmModel") or workspace.llm_model)
             workspace.llm_base_url = str(settings.get("llmBaseUrl") or workspace.llm_base_url)
+            if not settings.get("llmApiKey") and not settings.get("clearLlmApiKey"):
+                from .model_connections import connection_id, normalize
+                try:
+                    target=session.get(ModelConnection,connection_id(*normalize(workspace.llm_base_url,workspace.llm_model)))
+                except ValueError:
+                    target=None
+                if target and target.api_key:
+                    workspace.llm_api_key=target.api_key
             if settings.get("llmApiKey"):
                 workspace.llm_api_key = protect(str(settings["llmApiKey"]))
             if settings.get("clearLlmApiKey"):
@@ -348,6 +360,7 @@ class AzurJuusService:
                             settings_extras[key] = protect(value)
                     else:
                         settings_extras[key] = value
+            remember(session,workspace)
         ui_session = workspace_payload.get("uiSession") if isinstance(workspace_payload, dict) else None
         workspace.ui_session_json = self._build_workspace_ui_session(
             workspace,
@@ -957,6 +970,7 @@ class AzurJuusService:
                 Workflow,
                 Conversation,
                 Actor,
+                ModelConnection,
                 WorkspaceSetting,
             ]
 

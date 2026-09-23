@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -148,6 +148,18 @@ class WorkspaceSetting(TimestampMixin, Base):
     allow_idle_social: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     social_interval_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     ui_session_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class ModelConnection(Base):
+    __tablename__ = "model_connections"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_key: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    last_used_at: Mapped[float] = mapped_column(Float, nullable=False)
+    last_checked_at: Mapped[float | None] = mapped_column(Float)
+    last_check: Mapped[str] = mapped_column(String(32), default="unchecked", nullable=False)
 
 
 class Workflow(TimestampMixin, Base):

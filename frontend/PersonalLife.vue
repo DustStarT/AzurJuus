@@ -4,7 +4,7 @@ import { api } from './api';
 const props = defineProps<{actorId:string;view:string}>();
 type Goal = {id:string;title:string;motivation:string;nextStep:string;status:string;reason:string;evidence:string[]};
 type Activity = {id:string;title:string;purpose:string;status:string;reason:string;onlineSeconds:number};
-type LifeEvent = {id:string;seq:number;kind:string;text:string;at:number;sourceKind:string};
+type LifeEvent = {id:string;seq:number;kind:string;actorId:string;text:string;at:number;sourceKind:string};
 type Profile = {version:number;status:string;interpretation:Record<string,string[]|string>};
 function display(value:string[]|string|undefined) { return Array.isArray(value) ? value.join('\n') : value || ''; }
 const goals = ref<Goal[]>([]), activities = ref<Activity[]>([]), events = ref<LifeEvent[]>([]), profile = ref<Profile>();
@@ -46,6 +46,14 @@ async function more() {
   try { const page=await api<{events:LifeEvent[];nextCursor:number|null}>(`/api/actors/${props.actorId}/life?before=${cursor.value}`); events.value.push(...page.events); cursor.value=page.nextCursor; }
   catch(e) { error.value=(e as Error).message; }
 }
+async function resumeActivity(activityId:string) {
+  busy.value=true; error.value='';
+  try {
+    await api(`/api/actors/${props.actorId}/life/${activityId}/resume`,{});
+    await load();
+  } catch(e) { error.value=(e as Error).message; }
+  finally { busy.value=false; }
+}
 function changed(event:Event) { if ((event as CustomEvent).detail?.actorId===props.actorId)load(); }
 watch(()=>[props.actorId,props.view],load);
 onMounted(()=>{load();window.addEventListener('azur-mind-changed',changed);});
@@ -76,7 +84,7 @@ onUnmounted(()=>{active=false;window.removeEventListener('azur-mind-changed',cha
       </form>
     </template>
     <template v-if="view==='state'">
-      <h3>当前生活活动</h3><article v-for="a in activities.filter(a=>['active','invited','suspended'].includes(a.status))" :key="a.id" class="assignment"><strong>{{a.title}}</strong> · {{labels[a.status]}}<p>{{a.purpose}}</p><p v-if="a.reason">{{a.reason}}</p></article>
+      <h3>当前生活活动</h3><article v-for="a in activities.filter(a=>['active','invited','suspended'].includes(a.status))" :key="a.id" class="assignment"><strong>{{a.title}}</strong> · {{labels[a.status]}}<p>{{a.purpose}}</p><p v-if="a.reason">{{a.reason}}</p><p v-if="a.status==='suspended'" class="muted">此前在线进度已保留；继续后只从现在起推进。</p><button v-if="a.status==='suspended'" class="soft-button" :disabled="busy" @click="resumeActivity(a.id)">继续活动</button></article>
       <p v-if="!activities.some(a=>['active','invited','suspended'].includes(a.status))" class="muted">目前没有进行中的生活活动。</p>
       <details @toggle="($event.target as HTMLDetailsElement).open && diagnostics()"><summary>开发诊断：认知记录</summary>
         <p class="muted">记录简短判断、行动意图和来源，供排查使用；不代表模型完整的真实思维链。</p>
@@ -89,7 +97,7 @@ onUnmounted(()=>{active=false;window.removeEventListener('azur-mind-changed',cha
     </template>
     <template v-if="view==='experiences'">
       <h3>生活记录</h3><p class="muted">这些是在线发生的模拟活动。你在此观察不会让其他人物自动知情。</p>
-      <article v-for="event in events" :key="event.id" class="assignment"><small>{{new Date(event.at*1000).toLocaleString()}} · 模拟生活</small><p>{{event.text}}</p></article>
+      <article v-for="event in events" :key="event.id" class="assignment"><small>{{new Date(event.at*1000).toLocaleString()}} · 模拟生活<span v-if="event.kind==='dialogue'"> · {{event.actorId===props.actorId ? '本人发言' : '同伴发言'}}</span></small><p>{{event.text}}</p></article>
       <p v-if="!events.length" class="muted">还没有生活事件。</p><button v-if="cursor" class="text-button" @click="more">更早的生活记录</button>
     </template>
   </section>
