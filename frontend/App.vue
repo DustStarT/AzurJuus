@@ -107,7 +107,7 @@ const taskRuns = computed(() =>
 );
 const selectedRun = computed(
   () =>
-    runs.value.find((r) => r.id === selectedRunId.value) || taskRuns.value[0],
+    runs.value.find((r) => r.id === selectedRunId.value && r.mode !== 'chat') || taskRuns.value[0],
 );
 const attention = computed(
   () =>
@@ -271,7 +271,7 @@ async function send() {
     draft.value = "";
     attachmentIds.value = [];
     activeId.value = result.conversationId;
-    selectedRunId.value = result.runId;
+    if (mode.value !== 'chat' || guidingTask.value) selectedRunId.value = result.runId;
     await refresh();
     atBottom.value = true;
     await nextTick();
@@ -292,6 +292,10 @@ function keydown(e: KeyboardEvent) {
     e.preventDefault();
     void send();
   }
+}
+async function stopChat(id:string) {
+  try { await api(`/api/runs/${id}/control`,{action:'cancel'});await refresh(); }
+  catch(e) { notice.value=(e as Error).message; }
 }
 async function changeRole(id: string, role: string) {
   try {
@@ -615,10 +619,11 @@ onUnmounted(() => {
                 >
                   <span></span><span></span><span></span
                   ><small>{{
-                    working.status === "waiting_approval"
+                    working.mode === 'chat' ? '正在回复…' : working.status === "waiting_approval"
                       ? "有一项操作需要你的确认"
                       : Object.values(working.runtimeStages || {}).sort((a, b) => b.at - a.at)[0]?.label || "已接收，等待执行"
-                  }}</small><button class="text-button" @click="selectedRunId = working.id; showWork = true">查看进度</button>
+                  }}</small><button v-if="working.mode !== 'chat'" class="text-button" @click="selectedRunId = working.id; showWork = true">查看进度</button>
+                  <button v-else class="text-button" @click="stopChat(working.id)">停止回复</button>
                 </div>
                 <button
                   v-for="r in taskRuns.slice(0, 3)"

@@ -5,8 +5,9 @@ type Node={id:string;name:string;faction:string;research:{status?:string;progres
 type Edge={from:string;to:string;summary:string;background:{text:string;source?:string;quote?:string;origin?:string}[]};
 type Batch={id:string;total:number;done:number;progress:number};
 const nodes=ref<Node[]>([]),edges=ref<Edge[]>([]),batch=ref<Batch|null>(null),selected=ref(''),error=ref(''),source=ref(''),refreshing=ref(false);
+const waitingReason=ref('');
 const emit=defineEmits<{select:[string]}>();
-async function load(){try{const data=await api<{nodes:Node[];edges:Edge[];batch:Batch|null}>('/api/relationships/graph');nodes.value=data.nodes;edges.value=data.edges;batch.value=data.batch;}catch(e){error.value=(e as Error).message;}}
+async function load(){try{const data=await api<{nodes:Node[];edges:Edge[];batch:Batch|null;waitingReason?:string}>('/api/relationships/graph');nodes.value=data.nodes;edges.value=data.edges;batch.value=data.batch;waitingReason.value=data.waitingReason||'';}catch(e){error.value=(e as Error).message;}}
 let timer:number|undefined;
 onMounted(()=>{load();timer=window.setInterval(()=>{if(nodes.value.some(n=>['pending','fetching','analyzing','saving'].includes(n.research.status||'')))load();},900)});
 onUnmounted(()=>window.clearInterval(timer));
@@ -22,6 +23,8 @@ async function research(){try{await api(`/api/actors/${selected.value}/research-
 async function refreshAll(){if(refreshing.value || (batch.value && batch.value.done<batch.value.total))return;refreshing.value=true;error.value='';try{await api('/api/relationships/refresh-all',{});await load();}catch(e){error.value=(e as Error).message;}finally{refreshing.value=false;}}
 </script>
 <template><section aria-label="人物关系网络"><h3>关系网络</h3><p>仅展示原作与研究资料中有出处的关系。后续聊天、合作和个人判断保留在人物记忆中。</p><button class="text-button" @click="load">刷新关系图</button><button class="soft-button" :disabled="refreshing || !!batch && batch.done<batch.total" @click="refreshAll">{{refreshing?'正在排队…':batch && batch.done<batch.total?'正在检索…':'全部重新检索'}}</button><p v-if="batch" class="research-progress" role="status">批量研究 {{batch.done}} / {{batch.total}} 人 · {{batch.progress}}%<progress :value="batch.progress" max="100"/></p><p v-if="error" role="alert">{{error}}</p>
+<p v-if="waitingReason" role="status">{{waitingReason}}</p>
+<p v-for="node in nodes.filter(n=>['fetching','analyzing','saving'].includes(n.research.status||''))" :key="node.id" role="status">{{node.name}}：{{node.research.message}}</p>
 <svg viewBox="0 0 600 360" role="group" aria-label="可点击人物关系图">
  <defs><marker id="relationship-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#6aa9bc"/></marker></defs>
  <line v-for="edge in visualEdges.filter(e=>point(e.from)&&point(e.to))" :key="edge.from+edge.to" :x1="point(edge.from)!.x" :y1="point(edge.from)!.y" :x2="endpoint(edge).x" :y2="endpoint(edge).y" stroke="#9bc0cf" :stroke-dasharray="edge.background.some(b=>b.source)?undefined:'5 4'" :opacity="!selected||edge.from===selected||edge.to===selected?1:.18"/>

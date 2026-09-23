@@ -46,6 +46,24 @@ def backup_cognition_migration(engine, settings):
         shutil.copy2(settings.workspace_state_path, folder / 'workspace.json')
 
 
+def backup_mind_migration(engine, settings):
+    """Back up before create_all adds the life and decision tables."""
+    if engine.dialect.name != 'sqlite' or engine.url.database == ':memory:':
+        return
+    with engine.connect() as connection:
+        if not engine.dialect.has_table(connection, 'actors') or engine.dialect.has_table(connection, 'mind_profiles'):
+            return
+    import shutil
+    folder = settings.workspace_state_path.parent / 'migration-backups' / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-mind-v4')
+    folder.mkdir(parents=True, exist_ok=True)
+    for label, source in [('business.db', Path(engine.url.database)), ('runs.db', settings.workspace_state_path.parent / 'runs.db')]:
+        if source.exists():
+            with sqlite3.connect(source) as src, sqlite3.connect(folder / label) as dst:
+                src.backup(dst)
+    if settings.workspace_state_path.exists():
+        shutil.copy2(settings.workspace_state_path, folder / 'workspace.json')
+
+
 def migrate(engine):
     """Additive migrations; back up the original SQLite before changing user rows."""
     with engine.connect() as conn:

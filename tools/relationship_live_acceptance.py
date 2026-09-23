@@ -21,7 +21,8 @@ def main():
     home.mkdir(parents=True)
     os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///'+(home/'app.db').as_posix(),
         AZURJUUS_WORKSPACE_STATE_PATH=str(home/'state/workspace.json'), AZURJUUS_WORKSPACE_ROOT=str(home/'work'),
-        AZURJUUS_SOCIAL_ENABLED='0', AZURJUUS_REFLECTION_ENABLED='0', AZURJUUS_SKILL_TRIALS_ENABLED='0')
+        AZURJUUS_SOCIAL_ENABLED='0', AZURJUUS_MIND_ENABLED='1', AZURJUUS_REFLECTION_ENABLED='0', AZURJUUS_SKILL_TRIALS_ENABLED='0',
+        AZURJUUS_CHROMA_PATH=str(home/'chroma'), AZURJUUS_CHROMA_URL='', AZURJUUS_REDIS_URL='')
     from fastapi.testclient import TestClient
     from backend.app import create_app
     from backend.database import session_scope
@@ -54,7 +55,17 @@ def main():
                 report.setdefault('modelOutputs',[]).append(value)
                 return value
             app.state.runs.expression.complete=capture
-            asyncio.run(app.state.runs.relationship_research.tick())
+            # Exercise the production queue; a direct tick would hide starvation.
+            deadline=time.monotonic()+210
+            report['progressStates']=[]
+            while time.monotonic()<deadline:
+                status=next(n['research'] for n in client.get('/api/relationships/graph').json()['nodes'] if n['id']==aid)
+                phase=status.get('status')
+                if not report['progressStates'] or report['progressStates'][-1]!=phase:
+                    report['progressStates'].append(phase)
+                    print(json.dumps({'phase':phase,'progress':status.get('progress')}),flush=True)
+                if phase in {'completed','partial','failed'}:break
+                time.sleep(2)
             graph=client.get('/api/relationships/graph').json()
             report['research']=next(n['research'] for n in graph['nodes'] if n['id']==aid)
             report['evidence']=[b for e in graph['edges'] for b in e['background']

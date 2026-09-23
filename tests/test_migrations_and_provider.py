@@ -60,6 +60,24 @@ def test_retired_legacy_execution_routes_are_gone(monkeypatch, tmp_path):
             assert client.post(path, json={}).status_code == 405, path
 
 
+def test_mind_v4_backup_precedes_additive_tables(monkeypatch,tmp_path):
+    configure_test_env(monkeypatch,tmp_path)
+    with TestClient(create_app()) as client:
+        original=client.get('/api/bootstrap').json()['snapshot']
+    with get_engine().begin() as db:
+        db.execute(text('DROP TABLE mind_profiles'))
+        db.execute(text('DELETE FROM azur_schema_migrations WHERE version=4'))
+    with TestClient(create_app()) as client:
+        assert client.get('/api/bootstrap').json()['snapshot']['messages']==original['messages']
+        assert client.get('/api/actors/'+original['agents'][0]['id']+'/life').json()['events']==[]
+    backups=list((tmp_path/'migration-backups').glob('*-mind-v4/business.db'))
+    assert len(backups)==1
+    with sqlite3.connect(backups[0]) as db:
+        assert not db.execute("SELECT name FROM sqlite_master WHERE name='mind_profiles'").fetchone()
+    with TestClient(create_app()):pass
+    assert len(list((tmp_path/'migration-backups').glob('*-mind-v4/business.db')))==1
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('status', [401, 429, 500])
 async def test_provider_errors_never_turn_into_template_success(monkeypatch, status):

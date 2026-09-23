@@ -430,8 +430,8 @@ def test_group_respects_auto_reply_budget_even_if_agents_keep_asking(world):
             'sourceIds':[source],'replyTo':last['id'] if last else None,'mentions':[]}
     e.decide=speak
     asyncio.run(e._exchange(t['id']))
-    assert len(calls)==8
-    assert calls[-1][1]['openQuestion']['text']=='第7次接话？'
+    assert len(calls)==6
+    assert calls[-1][1]['openQuestion']['text']=='第5次接话？'
 
 
 def test_model_retries_inviting_an_existing_member_before_commit(world):

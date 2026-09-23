@@ -220,6 +220,48 @@ def test_task_answer_can_preserve_multiple_book_descriptions(world):
     assert '复核通过只是可信度背景' in requests[0][0]['content']
 
 
+def test_task_expression_host_binds_source_and_preserves_sticker_at_limit(world):
+    from backend.sticker_catalog import catalog
+    c,_,(aid,*_)=world
+    run,actor=fixture_run(c,aid)
+    parts=['资料按主题归档。']*12
+    label=catalog()[0]['label']
+    seen=[];requests=[]
+    async def generate(messages,settings):
+        requests.append(settings)
+        # An opaque model-supplied ID is neither provenance nor a content claim.
+        return {'segments':parts,'sticker':label,'sourceIds':['wrong-generated-id']}
+    async def publish(rid,value):seen.append(value)
+    c.expression.generate,c.message_callback=generate,publish
+    answer=asyncio.run(c.expression.speak(run,actor,'result','告知结果',facts={'summary':parts[0]}))
+    assert answer.count(parts[0])==12 and answer.endswith('[表情:'+label+']')
+    assert len(requests)==1 and requests[0]['_structuredOutputTokens']==4096
+    assert requests[0]['_structuredTimeout']==40
+    assert seen[0]['sourceIds']==[run['id']+':result'] and len(seen[0]['segments'])==12
+    assert not c.store.get(run['id']).get('expressionError')
+
+
+def test_list_markers_do_not_bypass_factual_number_checks():
+    value={'segments':['1. red=13\n2. blue=8'], 'sourceIds':['x']}
+    assert validate(value,'x',True,{'red':13,'blue':8})
+    for text in ['1. red=99','13.5 千克','1. blue=8\n2. 移动了99份文件']:
+        with pytest.raises(ValueError,match='数字'):
+            validate({'segments':[text],'sourceIds':['x']},'x',True,{'red':13,'blue':8})
+
+
+def test_source_binding_does_not_accept_fabricated_task_facts(world):
+    c,_,(aid,*_)=world
+    run,actor=fixture_run(c,aid)
+    published=[]
+    async def generate(*_):return {'segments':['已移动99份文件。']}
+    async def publish(*args):published.append(args)
+    c.expression.generate,c.message_callback=generate,publish
+    assert asyncio.run(c.expression.speak(run,actor,'result','告知结果',facts={'count':3}))==''
+    assert not published
+    events=[e for e in c.store.events() if e['type']=='expression.validation_failed']
+    assert len(events)==2 and all(e['payload']['textChars'] for e in events)
+
+
 def test_group_targeting_and_partial_failure_remain_visible(world):
     c, _, (aid,bid,*_) = world
     c.social_engine.enabled = False

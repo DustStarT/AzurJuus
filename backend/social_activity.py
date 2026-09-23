@@ -20,7 +20,7 @@ class SocialActivity:
         with session_scope() as s:
             if not s.get(SocialTopic, self.KEY):
                 s.add(SocialTopic(id=self.KEY, conversation_id='', status='control', version=0,
-                    data={'settings': dict(self.DEFAULTS), 'calls': [], 'lastTopic': 0}))
+                    data={'settings': dict(self.DEFAULTS), 'calls': [], 'lastTopic': 0,'defaultsVersion':'life-v4'}))
 
     def touch(self, cid, message_id):
         self.last_input = time.monotonic()
@@ -28,6 +28,10 @@ class SocialActivity:
         self.revision += 1
 
     def inspect(self):
+        runtime=getattr(self.engine.c.cognition,'runtime',None)
+        if runtime and runtime.enabled:
+            result=runtime.control()
+            return {**result,'settings':{**self.DEFAULTS,**result['settings']},'lastTopic':0}
         with session_scope() as s:
             row = s.get(SocialTopic, self.KEY)
             data = row.data if row else {}
@@ -36,7 +40,7 @@ class SocialActivity:
                 'lastTopic': data.get('lastTopic', 0)}
 
     def change(self, payload):
-        limits = {'hourlyCalls': (1, 100), 'topicIntervalSeconds': (1800, 86400), 'idleSeconds': (60, 3600)}
+        limits = {'hourlyCalls': (1, 1000), 'topicIntervalSeconds': (1800, 86400), 'idleSeconds': (60, 3600)}
         for key, value in payload.items():
             if key == 'paused':
                 if not isinstance(value, bool): raise ValueError('暂停设置应为布尔值')
@@ -47,8 +51,11 @@ class SocialActivity:
             # Acquire the SQLite writer before reading and replacing the JSON.
             s.execute(update(SocialTopic).where(SocialTopic.id == self.KEY).values(version=SocialTopic.version+1))
             row = s.get(SocialTopic, self.KEY)
-            row.data = {**row.data, 'settings': {**self.DEFAULTS, **row.data.get('settings', {}), **payload}}
+            row.data = {**row.data, 'settingsEdited':True, 'settings': {**self.DEFAULTS, **row.data.get('settings', {}), **payload}}
         self.revision += 1
+        runtime=getattr(self.engine.c.cognition,'runtime',None)
+        if runtime and runtime.enabled:
+            runtime.control({k:v for k,v in payload.items() if k in {'paused','hourlyCalls'}})
         return self.inspect()
 
     def reserve(self, *, topic=False):

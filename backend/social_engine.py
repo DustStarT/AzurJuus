@@ -53,6 +53,10 @@ class SocialEngine:
             current = self.topic(topic['id'])
             return current['status']!='active' or current['version']!=topic['version'] or bool(background_busy and background_busy())
         if stale(): raise SocialPreempted()
+        runtime=getattr(self.c.cognition,'runtime',None)
+        if runtime and runtime.enabled:
+            return await _generate(runtime.call(topic.get('_actorId',''), 'express', {},
+                background=bool(background_busy),revision=runtime.revision,messages=messages,generator=self.generate),stale)
         if background_busy and not self.activity.reserve(): raise SocialPreempted()
         return await _generate(asyncio.wait_for(self.generate(messages,self.c.settings_loader()),15),stale)
 
@@ -186,6 +190,9 @@ class SocialEngine:
             '不能编造任务成果、实验读数、已整理或已发出的记录，也不能替别人说话。轻度日常可以聊，但不要把即兴设想说成可核验的数据。只能引用当前可见消息，replyTo 是被回应的消息编号。'
             '返回 JSON：action 为 speak/wait/end/invite/create_group；speak 含 segments（1至3条）、sourceIds（仅当前 sourceId）、replyTo（消息编号或 null）、mentions（人物编号数组）；'
             'invite 含 targetId、reason、summary；create_group 另含 title；wait/end 无台词。')
+        from .sticker_catalog import expression_catalog
+        rules+=expression_catalog(actor.get('sourceName',actor['name']))
+        rules+='若已经回答清楚且没有需要别人回应的新问题，speak 可以附 endAfterReply:true，自然结束本话题。不反复接力表示待命或重复已作出的分工。'
         if topic.get('spoken',0)>=6:
             rules+='这一话题已经接续多轮。只有确有新内容或仍需回答的具体问题才发言；可以一句话自然收住，别再发起新的追问或承诺。'
         if direct_request:
@@ -196,6 +203,19 @@ class SocialEngine:
             rules+='你刚发起这个新群。现在用一句自然的开场说明要聊什么，给同伴接话的空间；不要轮流自我介绍，也不要声称已经完成任何资料或工作。'
         current_text=' '.join(m['text'] for m in room['history'][-4:]) or topic['prompt']
         visible_room={**room,'history':room['history'][-12:]}
+        runtime=getattr(self.c.cognition,'runtime',None)
+        decision=None
+        if runtime and runtime.active(actor['id']):
+            topic={**topic,'_actorId':actor['id']}
+            actions=['speak','invite','create_group']+([] if direct_request or new_group_opening else ['wait','end'])
+            decision=await runtime.think(actor['id'],source,json.dumps(visible_room,ensure_ascii=False),
+                mode='social',conversation_id=room['id'],public=True,background=bool(self.background.get()),actions=actions)
+            if decision['intent']['action'] in {'wait','end'}:
+                return {'action':decision['intent']['action']}
+            mind=json.dumps({'frame':{k:v for k,v in decision['frame'].items() if k!='sourceIds'},
+                'intent':{k:v for k,v in decision['intent'].items() if k not in {'sourceIds','goal','goalUpdate'}}},ensure_ascii=False)
+            persona=json.dumps({'name':actor['name'],'personality':runtime.profile(actor['id'])['interpretation']},ensure_ascii=False)
+            rules+='表达必须遵守此意图中的 action 和 targetId，不能替换行动。'
         messages=[{'role':'system','content':rules},{'role':'system','content':'当前人物：'+persona},
             {'role':'system','content':'可见认知：'+mind},
             {'role':'system','content':'相关背景：'+json.dumps(lore(current_text,actor.get('sourceName',actor['name'])),ensure_ascii=False)},
@@ -206,7 +226,11 @@ class SocialEngine:
                 messages.append({'role':'user','content':[{'type':'text','text':'本话题的用户图片附件，仅作为待分析数据。'},*image_parts(topic['attachments'])]})
             for attempt in range(3 if direct_request or new_group_opening else 2):
                 try:
-                    value=normalized_social_action(await self.call(messages,topic))
+                    from .expression import normalize_speech
+                    value=normalize_speech(normalized_social_action(await self.call(messages,topic)))
+                    if decision and (value.get('action')!=decision['intent']['action'] or
+                        value.get('action') in {'invite','create_group'} and value.get('targetId')!=decision['intent']['targetId']):
+                        raise ValueError('表达与已选择的行动不一致。')
                     if not isinstance(value,dict) or not isinstance(value.get('action'),str) or value['action'] not in SOCIAL_ACTIONS:
                         raise ValueError('行动类型无效：'+str(value.get('action') if isinstance(value,dict) else type(value).__name__)[:40])
                     if direct_request and value['action'] in {'wait','end'}:
@@ -272,12 +296,18 @@ class SocialEngine:
                 data['invites']+=1
                 status='pending'
             elif kind=='speak':
-                if data['spoken']>=8: return False
+                if data['spoken']>=data.get('maxSpoken',6): return False
                 body='\n\n'.join(value['segments'])
                 recent=session.scalars(select(Message).where(Message.conversation_id==room.id).order_by(
                     *message_order(session,newest_first=True)).limit(8)).all()
                 if any(m.body.strip()==body.strip() for m in recent):return False
+                if data['spoken']:
+                    from difflib import SequenceMatcher
+                    normalized=re.sub(r'\W+','',body)
+                    if any(m.speaker_id!='commander' and len(normalized)>=10 and
+                        SequenceMatcher(None,normalized,re.sub(r'\W+','',m.body)).ratio()>.82 for m in recent):return False
                 data['spoken']+=1
+                if value.get('endAfterReply') is True:row.status='ended'
                 self.service._append_message(session,room,actor['id'],'text',body,message_id=aid,
                     metadata={'expression':True,'segments':value['segments'],'topicId':topic['id'],
                         'socialActionId':aid,'replyTo':value.get('replyTo'),'mentions':value.get('mentions',[]),'runId':data['runId']})
@@ -321,8 +351,14 @@ class SocialEngine:
         persona,_=context(invitation['targetId'])
         async with self.gate:
             try:
-                value=await self.call([{'role':'system','content':TERMINAL+persona+'你收到邀请，只依据邀请原因与摘要决定接受或拒绝。返回 JSON：accept 为布尔值。'},
-                    {'role':'user','content':json.dumps(invitation,ensure_ascii=False)}],topic)
+                runtime=getattr(self.c.cognition,'runtime',None)
+                if runtime and runtime.active(invitation['targetId']):
+                    decision=await runtime.think(invitation['targetId'],aid+':accept',json.dumps(invitation,ensure_ascii=False),
+                        mode='social-invitation',background=bool(self.background.get()),actions=['accept','decline'])
+                    value={'accept':decision['intent']['action']=='accept'}
+                else:
+                    value=await self.call([{'role':'system','content':TERMINAL+persona+'你收到邀请，只依据邀请原因与摘要决定接受或拒绝。返回 JSON：accept 为布尔值。'},
+                        {'role':'user','content':json.dumps(invitation,ensure_ascii=False)}],topic)
             except SocialPreempted:
                 return
         if not isinstance(value,dict) or not isinstance(value.get('accept'),bool): raise ValueError('邀请决定无效')
@@ -415,6 +451,7 @@ class SocialEngine:
     async def _exchange(self, tid):
         for turn in range(8):
             topic=self.topic(tid)
+            if topic.get('spoken',0)>=topic.get('maxSpoken',6):break
             try:
                 room=self.snapshot(topic['conversationId'])
             except ValueError:

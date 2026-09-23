@@ -35,12 +35,15 @@ class Cognition:
         self.enabled = os.getenv('AZURJUUS_COGNITION_ENABLED', '1') == '1'
         self.last_error = None
         self.latencies = []
+        self.runtime = None
 
     def initialize(self):
         # Existing events must not become invented psychological history.
         with session_scope() as session:
             if session.get(MindCursor, 'runtime') is None:
                 session.add(MindCursor(id='runtime', seq=self.store.state()['cursor']))
+        if self.runtime and self.runtime.enabled:
+            self.runtime.life.recover()
 
     def state(self, session, actor_id):
         actor = session.get(Actor, actor_id)
@@ -48,9 +51,14 @@ class Cognition:
             raise ValueError('角色不存在。')
         state = session.get(MindState, actor_id)
         if state is None:
-            state = MindState(actor_id=actor_id, version=0, enabled=True, data=empty_state())
-            session.add(state)
-            session.flush()
+            # Independent inspection endpoints may initialize the same actor concurrently.
+            if session.bind.dialect.name == 'sqlite':
+                from sqlalchemy.dialects.sqlite import insert
+            else:
+                from sqlalchemy.dialects.postgresql import insert
+            session.execute(insert(MindState).values(actor_id=actor_id,version=0,enabled=True,data=empty_state())
+                .on_conflict_do_nothing(index_elements=['actor_id']))
+            state=session.get(MindState,actor_id)
         return state
 
     def pump(self):
@@ -59,6 +67,9 @@ class Cognition:
         started = time.perf_counter()
         try:
             with session_scope() as session:
+                # Projection can be triggered by both background maintenance and
+                # an inspection request. Serialize before reading its cursor.
+                session.execute(update(MindCursor).where(MindCursor.id=='runtime').values(seq=MindCursor.seq))
                 cursor = session.get(MindCursor, 'runtime')
                 if cursor is None:
                     session.add(MindCursor(id='runtime', seq=self.store.state()['cursor']))
@@ -113,7 +124,7 @@ class Cognition:
         elif kind == 'run.created':
             # On collaborative admission only the coordinator has observed the request.
             aid = payload['actorId']
-            yield aid, 'request', payload['prompt'], {'scope': 'personal_observation'}, payload['id'] + ':request'
+            yield aid, 'request', payload['prompt'], {'scope': 'personal_observation','conversationId':payload.get('conversationId','')}, payload['id'] + ':request'
         elif kind == 'message.complete' and payload.get('text'):
             run = self.store.get(event['runId'])
             speaker = payload.get('actorId')
@@ -121,7 +132,8 @@ class Cognition:
             # Group messages are public observations; personal thoughts never enter this stream.
             for aid in participants:
                 yield aid, 'speech', payload['text'], {'scope': 'team_public' if run['collaborative'] else 'personal_observation',
-                    'speakerId': speaker, 'ownSpeech': aid == speaker, 'peers': sorted(participants - {aid})}, payload['messageId']
+                    'speakerId': speaker, 'ownSpeech': aid == speaker, 'peers': sorted(participants - {aid}),
+                    'conversationId':run.get('conversationId','')}, payload['messageId']
         elif kind == 'run.updated' and payload.get('status') in {'completed', 'failed', 'cancelled'}:
             if payload.get('mode') == 'chat':
                 return
@@ -130,7 +142,7 @@ class Cognition:
             for aid in participants:
                 yield aid, 'outcome', f"任务状态：{payload['status']}。{summary}", {
                     'scope': 'team_public', 'verified': payload['status'] == 'completed',
-                    'peers': sorted(participants - {aid})}, payload['id'] + ':outcome:' + payload['status']
+                    'peers': sorted(participants - {aid}),'conversationId':payload.get('conversationId','')}, payload['id'] + ':outcome:' + payload['status']
 
     def flush_outbox(self):
         with session_scope() as session:
@@ -358,6 +370,9 @@ class Cognition:
             session.add(MindOutbox(id=identity(actor_id, 'revise', state.version), payload={'actorId': actor_id,
                 'sourceId': experience_id, 'version': state.version, 'runId': row.run_id}))
         self.flush_outbox()
+        if self.runtime:
+            for source_id in affected:
+                self.runtime.invalidate(actor_id, source_id)
 
     def configure(self, actor_id, enabled=None, reset=False):
         with session_scope() as session:
@@ -371,6 +386,8 @@ class Cognition:
             session.add(MindOutbox(id=identity(actor_id, 'configure', state.version),
                 payload={'actorId':actor_id, 'version':state.version, 'reset':reset}))
         self.flush_outbox()
+        if self.runtime and (reset or enabled is False):
+            self.runtime.invalidate(actor_id, reset=True)
         return self.inspect(actor_id)
 
     def reflection_candidate(self):

@@ -69,12 +69,22 @@ def install_run_api(app, service, settings):
                 audience = {'kind':'team', 'name':'当前协作群', 'includesUser':True,
                     'members':[{'id':a['id'],'name':a['name']} for a in run['actors'] if a['id'] in participant_ids]}
                 intent = '在当前协作群收尾，承接成员刚完成的工作，说清结果或仍需决定的一件事。'
-            await coordinator.expression.speak(run, run['actors'][0], 'result', intent,
+            spoken = await coordinator.expression.speak(run, run['actors'][0], 'result', intent,
                 facts={'status':run['status'], 'request':run['prompt'], 'summary':text,
                     'answers':[{'request':a['brief'], 'summary':(a.get('result') or {}).get('summary','')} for a in run['assignments']],
                     'review':{'performedBy':'应用内审查者，不是用户', 'summary':(run.get('reviewResult') or {}).get('summary','')},
                     'artifacts':[a.get('path') if isinstance(a,dict) else a for a in run.get('artifacts', [])]},
                 audience=audience)
+            if not spoken:
+                # Delivery is already verified. A failed stylistic rendering must
+                # never hide its answer or require re-running side effects.
+                fallback_id=run_id+'-verified-result'
+                with session_scope() as session:
+                    room=session.get(Conversation,run['conversationId'])
+                    if room and not session.get(Message,fallback_id):
+                        service._append_message(session,room,run['actorId'],'text','任务结果（执行记录）：\n'+text,
+                            metadata={'runId':run_id,'verifiedResult':True,'expressionFallback':True},message_id=fallback_id)
+                store.event(run_id,'conversation.changed',{'conversationId':run['conversationId']})
         message_id = run_id + "-result"
         if expressed:
             phase = 'chat' if run['mode'] == 'chat' else 'result'
@@ -82,6 +92,8 @@ def install_run_api(app, service, settings):
             message_id = run.get('groupChatMessageId') or message_id
         with session_scope() as session:
             conversation = session.get(Conversation, run["conversationId"])
+            if expressed and session.get(Message,run_id+'-verified-result') and not session.get(Message,message_id):
+                message_id=run_id+'-verified-result'
             if not expressed and conversation and session.get(Message, message_id) is None:
                 service._append_message(session, conversation, run["actorId"], "task" if run["mode"] != "chat" else "text", text, metadata={"runId": run_id, "artifacts": run.get("artifacts", [])}, message_id=message_id)
             origin = session.get(Conversation, run.get("originConversationId")) if run.get("originConversationId") else None
@@ -151,6 +163,19 @@ def install_run_api(app, service, settings):
         store.event(run_id, "conversation.changed", {"conversationId": run["conversationId"]})
 
     coordinator = RunCoordinator(store, load_settings, finished, "")
+    def recover_result(run):
+        if run.get('mode')=='chat' or run.get('status')!='completed' or not (run.get('result') or {}).get('summary'):return
+        with session_scope() as session:
+            if run.get('resultMessageId') and session.get(Message,run['resultMessageId']):return
+            room=session.get(Conversation,run['conversationId'])
+            if not room:return
+            mid=run['id']+'-verified-result'
+            if not session.get(Message,mid):
+                service._append_message(session,room,run['actorId'],'text','任务结果（执行记录）：\n'+run['result']['summary'],
+                    metadata={'runId':run['id'],'verifiedResult':True,'expressionFallback':True},message_id=mid)
+        store.update(run['id'],resultMessageId=mid)
+        store.event(run['id'],'conversation.changed',{'conversationId':run['conversationId']})
+    coordinator.completed_recovery=recover_result
     coordinator.message_callback = save_reply
     coordinator.method_loader = load_method
     coordinator.plan_callback = sync_team
@@ -162,7 +187,14 @@ def install_run_api(app, service, settings):
     coordinator.expression = ExpressionService(coordinator)
     from .social_engine import SocialEngine, install_social_api
     coordinator.social_engine = SocialEngine(coordinator, service)
-    service.background_budget = lambda: not coordinator.social_engine.enabled or coordinator.social_engine.activity.reserve()
+    from .mind_runtime import MindRuntime
+    coordinator.cognition.runtime = MindRuntime(coordinator.cognition, coordinator)
+    from .mind_api import install_mind_api
+    install_mind_api(app, coordinator.cognition.runtime)
+    from .mind_provider import install_background_provider
+    install_background_provider(app, coordinator)
+    service.background_budget = lambda: (coordinator.cognition.runtime.has_budget() if coordinator.cognition.runtime.enabled
+        else not coordinator.social_engine.enabled or coordinator.social_engine.activity.reserve())
     install_social_api(app, coordinator.social_engine)
     service.expression = coordinator.expression
     install_terminal_api(app, coordinator)
@@ -258,6 +290,7 @@ def install_run_api(app, service, settings):
                 for m in snapshot["messages"].get(cid, [])[-40:]
                 if (conversation.kind != "dm" or m["speakerId"] == "commander" or m["speakerId"] in member_ids)
                 and (not coordinator.expression.enabled or m['speakerId'] == 'commander' or m.get('metadata',{}).get('expression'))]
+            if payload.get('mode','task')!='chat':history=[]
         try:
             run = await coordinator.admit(payload, actors, current, history, start_now=False)
         except ValueError as exc:

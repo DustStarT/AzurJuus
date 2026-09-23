@@ -10,6 +10,7 @@ from backend.config import get_settings
 def configure_test_env(monkeypatch, tmp_path: Path, *, social_enabled: bool = False) -> None:
     """Isolated database, workspace and provider settings for one test."""
     monkeypatch.setenv("AZURJUUS_EXPRESSION_ENABLED", "0")
+    monkeypatch.setenv("AZURJUUS_MIND_ENABLED", "0")
     monkeypatch.setenv("AZURJUUS_EXECUTION_BACKEND", "hermes")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(parents=True, exist_ok=True)

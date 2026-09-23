@@ -20,7 +20,8 @@ def test_default_faction_relationship_and_graph(world):
     signal=c.cognition.social_participation(ids[0],'port-hub',ids[1],[])
     assert signal['defaultRelationship']['familiarity']=='familiar'
     assert not signal['commitments']
-    assert client.get('/api/relationships/graph').json()['edges']
+    # Defaults influence cognition but are not sourced graph edges.
+    assert not any(e['from']==ids[0] and e['to']==ids[1] for e in client.get('/api/relationships/graph').json()['edges'])
     # Cross-faction default acquaintance stays in cognition but does not clutter the graph.
     graph=client.get('/api/relationships/graph').json()
     assert not any(e['from']==ids[0] and e['to']==ids[2] for e in graph['edges'])
@@ -64,6 +65,6 @@ def test_example_relationships_are_concise_and_cross_default_hidden(world):
     ids={n['name']:n['id'] for n in graph['nodes']}
     edge=lambda a,b:next((e for e in graph['edges'] if e['from']==ids[a] and e['to']==ids[b]),None)
     assert '经常一同行动' in edge('标枪','Z23')['summary']
-    assert edge('标枪','雅努斯')['summary']=='同属皇家，彼此认识且熟悉。'
+    assert edge('标枪','雅努斯') is None
     assert edge('标枪','七省') is None
     assert all(len(e['summary'])<160 for e in graph['edges'])

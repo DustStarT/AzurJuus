@@ -78,6 +78,11 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             while True:
                 try:
                     mind.pump()
+                    if mind.runtime and mind.runtime.enabled:
+                        async with maintenance_lock:
+                            await mind.runtime.life.tick()
+                        await asyncio.sleep(2)
+                        continue
                     if not app.state.runs.tasks:
                         async with maintenance_lock:
                             if os.getenv('AZURJUUS_REFLECTION_ENABLED', '1') == '1':
@@ -98,6 +103,10 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
             await asyncio.sleep(3)
             while True:
                 try:
+                    runtime=app.state.runs.cognition.runtime
+                    if runtime and runtime.enabled:
+                        await asyncio.sleep(5)
+                        continue
                     if getattr(app.state, "runs", None) and app.state.runs.tasks:
                         await asyncio.sleep(5)
                         continue
@@ -328,13 +337,29 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
         }
 
     @app.post("/api/system/reset")
-    async def api_system_reset(request: Request):
+    async def api_system_reset(request: Request, payload: dict | None = None):
         from .personal_settings import require_idle
         require_idle(app.state.runs)
         async with maintenance_lock:
             require_idle(app.state.runs)
             with session_scope() as session:
+                preserve=(payload or {}).get('preserveKeysAndProfile') is True
+                retained=None
+                if preserve:
+                    settings_row=service.get_workspace(session)
+                    user=service.get_or_create_user(session)
+                    retained={'llm':settings_row.llm_api_key,'tool':settings_row.tool_api_key,
+                        'extras':{k:v for k,v in (settings_row.ui_session_json or {}).get('settingsExtras',{}).items() if k.lower().endswith('apikey')},
+                        'profile':{k:getattr(user,k) for k in ('name','initials','avatar_url')}}
                 workspace = service.reset_system(session, actor_id=request.state.actor_id)
+                if retained:
+                    settings_row=service.get_workspace(session)
+                    settings_row.llm_api_key=retained['llm'];settings_row.tool_api_key=retained['tool']
+                    settings_row.ui_session_json={**(settings_row.ui_session_json or {}),'settingsExtras':retained['extras']}
+                    user=service.get_or_create_user(session)
+                    for key,value in retained['profile'].items():setattr(user,key,value)
+                    session.flush()
+                    workspace=service.build_workspace_payload(session,actor_id=request.state.actor_id)
                 from .cognition_models import MindCursor
                 # Commit a source barrier with the reset: a crash before runtime
                 # cleanup must not project old events into freshly seeded actors.

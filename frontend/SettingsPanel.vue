@@ -5,6 +5,7 @@ import type { Workspace, Settings, Agent } from "./types";
 import Icon from "./Icon.vue";
 import Avatar from "./Avatar.vue";
 import TerminalConfiguration from './TerminalConfiguration.vue';
+import LifeSettings from './LifeSettings.vue';
 const props = defineProps<{ workspace: Workspace }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
 const tab = ref("connection"),
@@ -41,7 +42,9 @@ async function clearData() {
   if (!clearing.value || confirmation.value !== '确认清理') return;
   busy.value = true; error.value = '';
   try {
-    await api(clearing.value === 'reset' ? '/api/system/reset' : `/api/system/clear/${clearing.value}`, {});
+    const reset=['reset','reset-preserve'].includes(clearing.value);
+    await api(reset ? '/api/system/reset' : `/api/system/clear/${clearing.value}`, {preserveKeysAndProfile:clearing.value==='reset-preserve'});
+    if (reset) for (const key of Object.keys(localStorage)) { if (key.startsWith('azur-')) localStorage.removeItem(key); }
     // Drop stale stream/UI state only after the server has committed the reset.
     window.location.reload();
   } catch(e) { error.value = (e as Error).message; }
@@ -53,6 +56,7 @@ const tabs = [
   { id: "profiles", label: "角色资料与心智", icon: "users" },
   { id: "world", label: "关系与世界观", icon: "users" },
   { id: "tasks", label: "任务参与", icon: "folder" },
+  { id: "life", label: "自主生活", icon: "sparkle" },
   { id: "appearance", label: "外观与动态", icon: "circle" },
   { id: "skills", label: "技能档案", icon: "sparkle" },
   { id: "personal", label: "我的资料与数据", icon: "users" },
@@ -156,15 +160,17 @@ async function connectRoster() {
             <div class="section-divider"></div>
             <h3>记录与记忆</h3>
             <p class="muted">清理前先停止所有任务。以下操作均不会删除工作区内的实际文件。</p>
-            <label>清理范围<select v-model="clearing" @change="confirmation = ''">
+            <label>清理范围<select v-model="clearing" aria-label="清理范围" @change="confirmation = ''">
               <option value="">请选择</option>
               <option value="records">清空聊天和工作列表（保留长期记忆）</option>
               <option value="memory">忘记长期经历与关系判断（保留聊天和技能）</option>
               <option value="reset">初始化系统（清除记录、成长、技能与配置）</option>
+              <option value="reset-preserve">初始化系统（保留 API Key 与个人资料）</option>
             </select></label>
             <p v-if="clearing === 'records'" class="field-hint">清空聊天正文，归档工作记录；任务审计记录仍保留，人物可能仍记得长期经历。</p>
             <p v-if="clearing === 'memory'" class="field-hint">清除长期经历、推断与承诺；当前聊天内容仍可作为上下文。要从全新状态开始，请选择初始化。</p>
             <p v-if="clearing === 'reset'" class="error-message">恢复初始角色和设置，需要重新配置模型。此操作不是磁盘安全擦除，历史备份和诊断日志仍可能保留。</p>
+            <p v-if="clearing === 'reset-preserve'" class="field-hint">保留已保存的 API Key、称呼和头像，重置其他配置、聊天、角色、目标与成长记录。模型地址和型号也恢复默认，请在再次连接前重新选择。</p>
             <template v-if="clearing">
               <label>输入“确认清理”后执行<input v-model="confirmation" autocomplete="off" /></label>
               <button class="soft-button danger" :disabled="busy || confirmation !== '确认清理'" @click="clearData">执行清理</button>
@@ -262,6 +268,7 @@ async function connectRoster() {
             </button></details></template
           >
           <TerminalConfiguration v-if="['world','profiles','tasks'].includes(tab)" :key="tab" :section="tab" @changed="emit('saved')" />
+          <LifeSettings v-if="tab === 'life'" />
           <template v-if="tab === 'appearance'"
             ><span class="eyebrow">DISPLAY & LIFE</span>
             <h3>让港区慢下来</h3>
@@ -277,19 +284,7 @@ async function connectRoster() {
                 ><strong>减少动态效果</strong
                 ><small>减少转场与移动，保留即时反馈</small></span
               ><input type="checkbox" v-model="reduced" /></label
-            ><label class="switch-row"
-              ><span
-                ><strong>闲暇时发布动态</strong
-                ><small>有工作时优先处理委托</small></span
-              ><input
-                type="checkbox"
-                v-model="settings.allowIdleSocial" /></label
-            ><label
-              >动态间隔（分钟）<input
-                type="number"
-                min="5"
-                v-model.number="settings.socialIntervalMinutes" /></label
-          ></template>
+            ><p class="field-hint">人物活动、主动联系与免打扰在“自主生活”中设置。</p></template>
           <template v-if="tab === 'skills'"
             ><span class="eyebrow">SKILL ARCHIVE</span>
             <h3>技能档案</h3>
@@ -311,9 +306,9 @@ async function connectRoster() {
       </div>
       <footer class="settings-footer">
         <span class="muted">{{
-          ['world','profiles','tasks'].includes(tab) ? '本页修改请使用对应的保存按钮' : saved ? "设置已保存" : "AZURJUUS / LOCAL FIRST"
+          ['world','profiles','tasks','life'].includes(tab) ? '本页修改请使用对应的保存按钮' : saved ? "设置已保存" : "AZURJUUS / LOCAL FIRST"
         }}</span
-        ><button v-if="!['world','profiles','tasks'].includes(tab)" class="primary-button" :disabled="busy" @click="save">
+        ><button v-if="!['world','profiles','tasks','life'].includes(tab)" class="primary-button" :disabled="busy" @click="save">
           <Icon :name="saved ? 'check' : 'shield'" />{{
             busy ? "保存中…" : "保存设置"
           }}

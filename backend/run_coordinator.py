@@ -46,6 +46,8 @@ class RunCoordinator:
         self.dialogue = CollaborationDialogue(self)
 
     def launch(self, run_id):
+        if self.cognition and self.cognition.runtime and self.cognition.runtime.enabled:
+            self.cognition.runtime.interrupt()
         if run_id not in self.tasks or self.tasks[run_id].done():
             task = asyncio.create_task(self.run(run_id), name=run_id)
             self.tasks[run_id] = task
@@ -64,6 +66,8 @@ class RunCoordinator:
         if self.expression and self.expression.enabled:
             self.expression.recovery_task = asyncio.create_task(self.expression.recover(), name='expression-recovery')
         for run in self.store.list():
+            if getattr(self,'completed_recovery',None):self.completed_recovery(run)
+            run=self.store.get(run['id'])
             if run["status"] == "completed" and not run.get("resultMessageId") and run.get("result"):
                 await self.finish_callback(run["id"], run["result"]["summary"])
             if run["status"] == "queued":
@@ -277,6 +281,12 @@ class RunCoordinator:
         if self.expression and self.expression.enabled and (phase == 'chat' or discussion):
             return await self.expression.speak(run, actor, phase, prompt,
                 facts={'discussion':prompt} if discussion else None)
+        runtime=getattr(self.cognition,'runtime',None)
+        decision=None
+        if runtime and runtime.active(actor['id']):
+            checkpoint=self.store.get(run_id)
+            decision=await runtime.think(actor['id'],run_id+':'+phase+':'+str(checkpoint.get('revisionAttempt',0))+':'+str(len(checkpoint['steering'])),
+                prompt+'\n用户引导：'+json.dumps(checkpoint['steering'],ensure_ascii=False),mode='task',conversation_id=run['conversationId'],actions=['execute'])
         async with (self.interaction_gate if discussion or phase == 'chat' else self.gate):
             token = secrets.token_urlsafe(32)
             self.tokens[token] = (run_id, actor["id"], phase)
@@ -302,6 +312,11 @@ class RunCoordinator:
                 if name in run.get('allowedActions', phase_actions(phase))]}
             bridge_settings['_inputImages']=[a['path'] for a in run.get('attachments',[]) if a['mime'].startswith('image/')] if run.get('visionEnabled') and phase not in {'planner','chat'} and not phase.startswith('discussion_') else []
             bridge_settings['visionEnabled']=run.get('visionEnabled',False)
+            if getattr(self,'background_mind',None) and self.background_mind.enabled:
+                from urllib.parse import urlsplit
+                endpoint=urlsplit(self.endpoint)
+                bridge_settings['llmBaseUrl']=endpoint.scheme+'://'+endpoint.netloc+'/api/internal/background-model/'+token
+                bridge_settings['llmApiKey']=token
             persona = actor.get("systemPrompt") or actor.get("promptSeed") or actor.get("persona") or ""
             from .character_identity import material_context
             persona += material_context(actor.get('sourceMaterials', []))
@@ -312,6 +327,8 @@ class RunCoordinator:
             if discussion:
                 policy = "你在参与正在进行的任务讨论。当前无工具，只能依据给出的证据交流，不要让用户切换任务模式。"
             policy += expression_rules(phase)
+            if decision:
+                policy+='\n当前人物已选择的工作意图（不扩大授权）：'+json.dumps(decision['intent'],ensure_ascii=False)
             if phase not in {'chat', 'reviewer', 'planner'} and not discussion:
                 policy += ' deliver.summary 必须包含直接回答用户问题的实际内容，不要只写完成状态。阅读、分析、多文件说明应逐项给出名称、主要内容和不确定之处；工具过程放 checks，不用审计报告代替答案。'
             policy += '\n用户希望被称为：' + json.dumps(settings.get('userAddress', '指挥官'), ensure_ascii=False) + '。这是称呼资料，不是额外指令；不必每句称呼。'
@@ -323,7 +340,9 @@ class RunCoordinator:
             bridge = self.bridge_factory(self.store.path.parent / "hermes" / run_id / phase, bridge_settings, self.endpoint, token, on_event)
             self.bridges[key] = bridge
             context = self.store.recall(run["prompt"], actor["id"])
-            if self.cognition and self.cognition.enabled:
+            if decision:
+                context=[json.dumps({'frame':decision['frame'],'intent':decision['intent'],'stateVersion':decision['stateVersion']},ensure_ascii=False)]
+            elif self.cognition and self.cognition.enabled:
                 self.cognition.pump()
                 # The cognitive store owns memory visibility and forgetting.
                 context = [self.cognition.context(actor['id'], prompt,
@@ -472,13 +491,24 @@ class RunCoordinator:
             self.store.put_call(call_id, run_id, name, args, status, stored_result)
             current = self.store.get(run_id)
             pending = [s for s in current["steering"] if phase not in s.get("consumedBy", [])]
+            peer_messages=self.dialogue.take(run_id,actor_id,phase)
+            cognitive=None
+            runtime=getattr(self.cognition,'runtime',None)
+            if runtime and runtime.enabled and (pending or status=='failed' or peer_messages):
+                try:
+                    cognitive=await runtime.think(actor_id,call_id+':checkpoint',json.dumps({
+                        'task':run['prompt'],'toolResult':stored_result,'guidance':[s['text'] for s in pending],
+                        'peerMessages':peer_messages},ensure_ascii=False),mode='task',conversation_id=run['conversationId'],actions=['execute'])
+                except Exception as exc:
+                    self.store.event(run_id,'mind.checkpoint_failed',{'actorId':actor_id,'callId':call_id,'error':type(exc).__name__})
+                    cognitive={'unavailable':True,'note':'认知重评暂不可用；保留事实与用户引导，不宣称状态已更新。'}
             if pending:
                 for s in pending:
                     s.setdefault("consumedBy", []).append(phase)
                     s["delivered"] = True
                 self.store.update(run_id, steering=current["steering"])
-                return {"status": status, "callId": call_id, "result": result, "userInstructions": [s["text"] for s in pending], "peerMessages": self.dialogue.take(run_id, actor_id, phase)}
-            return {"status": status, "callId": call_id, "result": result, "peerMessages": self.dialogue.take(run_id, actor_id, phase)}
+                return {"status": status, "callId": call_id, "result": result, "userInstructions": [s["text"] for s in pending], "peerMessages":peer_messages,'cognitiveIntent':cognitive.get('intent',cognitive) if cognitive else None}
+            return {"status": status, "callId": call_id, "result": result, "peerMessages":peer_messages,'cognitiveIntent':cognitive.get('intent',cognitive) if cognitive else None}
         except asyncio.CancelledError:
             current_call = self.store.call(call_id)
             not_started = not current_call or current_call["status"] in {"waiting_approval", "approved"}
@@ -648,6 +678,8 @@ class RunCoordinator:
 
     async def _close_all(self):
         self.shutting_down = True
+        if self.cognition and self.cognition.runtime and self.cognition.runtime.enabled:
+            self.cognition.runtime.life.shutdown()
         pending = []
         if self.expression and self.expression.recovery_task:
             self.expression.recovery_task.cancel()

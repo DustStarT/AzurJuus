@@ -344,6 +344,11 @@ def validate_mind_notes(value,sources,members,subject,alias_catalog=None):
 class RelationshipResearch:
     def __init__(self,coordinator,service):self.c,self.service=coordinator,service
 
+    def has_pending(self):
+        with session_scope() as s:
+            return any((a.extra_json or {}).get('wikiResearch',{}).get('status') in
+                {'pending','fetching','analyzing','saving'} for a in roster_actors(s))
+
     def progress(self,aid,token,status,percent,message,**extra):
         with session_scope() as s:
             actor=s.get(Actor,aid)
@@ -433,7 +438,8 @@ class RelationshipResearch:
                     value=await research_complete(self.c.expression.complete,self.service.background_budget,messages,cfg,'supplementalSources')
                     if isinstance(value,dict):unresolved.extend(value.get('unresolved',[]))
                 return validate(value,sources,members,aid,alias_catalog),validate_mind_notes(value,sources,members,aid,alias_catalog),errors,checked,unresolved
-            edges,mind_notes,errors,checked,unresolved=await _generate(work(),lambda:bool(self.c.tasks))
+            async with asyncio.timeout(180):
+                edges,mind_notes,errors,checked,unresolved=await _generate(work(),lambda:bool(self.c.tasks))
             self.progress(aid,token,'saving',90,'正在保存关系与出处')
             with session_scope() as s:
                 actor=s.get(Actor,aid)
@@ -459,8 +465,9 @@ class RelationshipResearch:
         except asyncio.CancelledError:raise
         except Exception as exc:
             from .idle_social import SocialPreempted
-            if isinstance(exc,SocialPreempted):
-                self.progress(aid,token,'pending',5,'前台任务优先，等待继续')
+            from .mind_runtime import MindInterrupted
+            if isinstance(exc,(SocialPreempted,MindInterrupted)):
+                self.progress(aid,token,'pending',5,str(exc) or '前台任务优先，等待继续')
                 return
             with session_scope() as s:
                 actor=s.get(Actor,aid)
@@ -501,7 +508,14 @@ def install(app,c,service):
                     edges.append({'from':node['id'],'to':r['peerId'],
                         'background':background,
                         'summary':'；'.join(dict.fromkeys(item['text'].strip('。') for item in background))+'。'})
-        return {'nodes':nodes,'edges':edges,'batch':batch}
+        runtime=getattr(c.cognition,'runtime',None)
+        waiting=''
+        if c.tasks:waiting='前台对话或任务优先，结束后继续资料调查。'
+        elif runtime and runtime.enabled:
+            control=runtime.control()
+            if control['settings']['paused']:waiting='后台已暂停；请在自主生活设置中恢复。'
+            elif control['callsLastHour']>=control['settings']['hourlyCalls']:waiting='本小时后台模型额度已用尽，额度恢复后继续。'
+        return {'nodes':nodes,'edges':edges,'batch':batch,'waitingReason':waiting}
     @app.post('/api/relationships/refresh-all')
     def refresh_all():
         batch_id='research-'+hashlib.sha256(str(time.time_ns()).encode()).hexdigest()[:16]

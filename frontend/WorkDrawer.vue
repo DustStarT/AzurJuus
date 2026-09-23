@@ -33,7 +33,7 @@ const statuses: Record<string, string> = {
 const approvals = computed(() =>
   calls.value.filter((c) => c.status === "waiting_approval"),
 );
-const currentRuns = computed(() => props.runs.filter((r) => r.mode !== "chat" || r.status !== "completed" || r.id === props.run?.id));
+const currentRuns = computed(() => props.runs.filter((r) => r.mode !== 'chat'));
 let timer = 0;
 async function load() {
   if (props.run) {

@@ -68,6 +68,9 @@ def initialize_database(settings: Settings, metadata) -> str:
                 connection.execute(text("SELECT 1"))
             from . import cognition_models  # register additive business tables
             from . import social_models
+            from . import mind_models
+            from .migrations import backup_mind_migration
+            backup_mind_migration(engine, settings)
             from .migrations import backup_social_migration
             backup_social_migration(engine, settings)
             from .migrations import backup_cognition_migration
@@ -81,6 +84,8 @@ def initialize_database(settings: Settings, metadata) -> str:
                     connection.execute(text("INSERT INTO azur_schema_migrations VALUES(2)"))
                 if not connection.execute(text("SELECT version FROM azur_schema_migrations WHERE version=3")).first():
                     connection.execute(text("INSERT INTO azur_schema_migrations VALUES(3)"))
+                if not connection.execute(text("SELECT version FROM azur_schema_migrations WHERE version=4")).first():
+                    connection.execute(text("INSERT INTO azur_schema_migrations VALUES(4)"))
             if _engine is not None and _engine is not engine:
                 _engine.dispose()
             _engine = engine

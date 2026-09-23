@@ -21,6 +21,15 @@ PACKAGED=Path(__file__).resolve().parents[1]/'resources/ui/wiki-assets.json'
 MAX_MEDIA=3_000_000
 
 
+def expression_catalog(name=''):
+    """Provide actual selectable labels; validation alone cannot teach the catalog."""
+    items=catalog()
+    selected=sorted(items,key=lambda item: name not in item['label'])[:24]
+    labels=[item['label'] for item in selected]
+    return ('\n可用表情包标签：'+json.dumps(labels,ensure_ascii=False)+
+        '。情绪合适时可以自愿选一张，不必每次使用。在 JSON 的 sticker 字段填写一个标签（不使用时为 null），程序会显示为独立表情气泡；也可直接写成独立 segments 项 [表情:标签]。最多一张，不要编造标签。任务结论仍须用文字说清。')
+
+
 def cache_dir():
     return get_settings().workspace_state_path.parent/'sticker-cache'
 

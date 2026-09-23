@@ -962,6 +962,10 @@ class AzurJuusService:
 
             from .cognition_models import MindState, Experience, MindReceipt, MindCursor, MindOutbox
             deletion_order = [MindOutbox, MindReceipt, Experience, MindState, MindCursor, *deletion_order]
+            from .mind_models import MindProfile, MindDecision, PersonalGoal, LifeActivity, LifeRecord, MindControl, MindCall
+            from .social_models import SocialTopic, SocialAction
+            deletion_order = [MindCall, MindControl, LifeRecord, LifeActivity, PersonalGoal, MindDecision, MindProfile,
+                SocialAction, SocialTopic, *deletion_order]
 
             for model in deletion_order:
                 session.execute(delete(model))
