@@ -39,7 +39,7 @@ async def main():
         AZURJUUS_SOCIAL_ENABLED='0',AZURJUUS_REFLECTION_ENABLED='0',AZURJUUS_SKILL_TRIALS_ENABLED='0',
         AZURJUUS_EXECUTION_BACKEND='hermes',AZURJUUS_EXPRESSION_ENABLED='1')
     from backend.app import create_app
-    from backend.terminal_characters import activate
+    from backend.characters.terminal_characters import activate
     from fastapi.testclient import TestClient
     app = create_app()
     out = ROOT/'validation/terminal'

@@ -1,0 +1,162 @@
+/* Density stays constant across desktop sizes; only layout changes. */
+@media (max-width: 1100px) {
+  .juus-shell {
+    --conversation-width: 280px;
+  }
+  .message-scroll {
+    padding: 14px 12px 10px;
+  }
+  .chat-header-actions {
+    gap: 3px;
+  }
+  .chat-header {
+    padding: 5px 10px;
+  }
+  .chat-heading {
+    flex: 1;
+  }
+  .chat-header-actions .text-button {
+    font-size: 11px;
+    padding: 5px;
+  }
+  .composer {
+    padding-inline: 10px;
+  }
+  .composer-footer > span:first-child {
+    max-width: 65%;
+  }
+}
+@media (max-width: 800px) {
+  .juus-shell {
+    --nav-width: 64px;
+    --layout-gap: 8px;
+  }
+  .brand {
+    font-size: 14px;
+  }
+  .rail-nav > button {
+    width: 48px;
+    height: 56px;
+  }
+  .rail-nav > button > svg {
+    width: 28px;
+  }
+  .rail-nav > button > span {
+    font-size: 9px;
+  }
+  .rail-rule {
+    width: 32px;
+  }
+  .topbar {
+    padding-left: 0;
+  }
+  .topbar-status {
+    font-size: 0;
+    gap: 4px;
+  }
+  .topbar-status > .icon-button {
+    margin-left: 0;
+  }
+  .chat-layout {
+    display: flex;
+  }
+  .conversation-panel {
+    width: 100%;
+  }
+  .chat-panel {
+    display: none !important;
+  }
+  .is-mobile-chat .conversation-panel {
+    display: none;
+  }
+  .is-mobile-chat .chat-panel {
+    display: flex !important;
+    width: 100%;
+  }
+  .mobile-back {
+    display: flex;
+  }
+  .composer-footer > span:first-child {
+    display: none;
+  }
+  .composer-footer {
+    justify-content: flex-end;
+  }
+  .settings-modal {
+    width: 96vw;
+    height: 94vh;
+  }
+  .modal-scrim {
+    padding: 10px;
+  }
+  .settings-nav {
+    width: 150px;
+    padding: 10px 6px;
+  }
+  .settings-nav button {
+    gap: 6px;
+    padding: 8px;
+    font-size: 11px;
+  }
+  .settings-nav button > svg {
+    flex-shrink: 0;
+  }
+  .settings-content {
+    padding: 16px;
+  }
+  .settings-footer {
+    padding: 10px 16px;
+    flex-wrap: wrap;
+  }
+  .member-setting {
+    gap: 7px;
+  }
+  .member-setting .avatar {
+    width: 35px;
+    height: 35px;
+  }
+  .member-setting .text-button {
+    padding: 4px;
+  }
+  .work-drawer {
+    width: min(470px, calc(100vw - 16px));
+  }
+}
+@media (max-height: 620px) {
+  .rail-nav {
+    margin-bottom: 18px;
+    gap: 8px;
+  }
+  .rail-bottom {
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .modal-scrim {
+    padding: 10px;
+  }
+  .settings-modal {
+    height: calc(100dvh - 20px);
+  }
+  .settings-nav {
+    gap: 2px;
+  }
+  .settings-nav button {
+    padding-block: 7px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *:before,
+  *:after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+.reduced-motion *,
+.reduced-motion *:before,
+.reduced-motion *:after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}

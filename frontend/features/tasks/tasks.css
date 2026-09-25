@@ -1,0 +1,344 @@
+.drawer-scrim,
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #415c7736;
+}
+.drawer-scrim {
+  display: flex;
+  justify-content: flex-end;
+}
+.work-drawer {
+  width: min(470px, 100vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #fff;
+  overflow: hidden;
+
+  background: var(--surface);
+  box-shadow: -4px 0 20px #40556c18;
+}
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+
+  padding: 14px 20px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.drawer-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  font-size: 18px;
+  letter-spacing: 0.5px;
+  margin-top: 3px;
+  color: var(--ink);
+}
+.run-picker {
+  padding: 2px 25px 16px;
+}
+.run-picker select {
+  width: 100%;
+  border: 1px solid #d8e4ed;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #fff9;
+  color: #8699aa;
+  font-size: 11px;
+}
+.run-overview {
+  padding: 4px 25px 19px;
+  border-bottom: 1px solid var(--line);
+}
+.status-pill {
+  display: inline-block;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.status--running,
+.status--queued {
+  color: #63a8c4;
+}
+.status--completed {
+  color: #62ad95;
+}
+.status--waiting_approval,
+.status--paused,
+.status--uncertain {
+  color: #c69954;
+}
+.status--failed,
+.status--rejected {
+  color: #ce8290;
+}
+.status--cancelled {
+  color: #9da7b2;
+}
+.run-overview h3 {
+  font-size: 15px;
+  line-height: 1.85;
+  margin: 12px 0;
+  max-height: 110px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.run-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.check-label {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px !important;
+  line-height: 1.7 !important;
+  margin-top: 12px !important;
+  color: #8f9fac !important;
+}
+.check-label input {
+  width: 14px !important;
+  height: 14px;
+  accent-color: #74bcd4;
+  flex-shrink: 0;
+  padding: 0 !important;
+}
+.drawer-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+
+  padding: 0 20px;
+  gap: 20px;
+}
+.drawer-tabs button {
+  padding: 13px 0;
+  font-size: 12px;
+  color: #9ba9b7;
+  border-bottom: 2px solid transparent;
+}
+.drawer-tabs button.active {
+  color: #5699b5;
+  border-bottom-color: #75c5df;
+}
+.drawer-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+
+  padding: 16px 20px;
+  overflow-wrap: anywhere;
+}
+.assignment {
+  padding: 13px 0 19px;
+  border-bottom: 1px solid var(--line);
+}
+.assignment-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.step-number {
+  color: #b1becc;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.assignment-line > .avatar {
+  width: 35px;
+  height: 35px;
+  font-size: 14px;
+}
+.assignment-line > div {
+  flex: 1;
+}
+.assignment-line strong {
+  font-size: 12px;
+  color: #6b8193;
+}
+.assignment-line small {
+  font-size: 10px;
+  display: block;
+  color: #94a4b4;
+  margin-top: 4px;
+}
+.assignment-line > svg {
+  color: #69ac99;
+  width: 17px;
+}
+.assignment > p {
+  font-size: 12px;
+
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.assignment details {
+  font-size: 11px;
+  line-height: 1.9;
+  color: #7e9aaa;
+
+  margin: 10px 0 0;
+}
+.assignment details p {
+  white-space: pre-wrap;
+}
+.tool-record {
+  background: #fff9;
+  border: 1px solid #e2e9f2;
+  border-radius: var(--radius-control);
+  margin-bottom: 9px;
+  padding: 12px;
+  font-size: 11px;
+  color: #8798a8;
+}
+.tool-record summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.tool-record summary > span {
+  flex: 1;
+  color: #72899d;
+}
+.tool-record summary > small {
+  font-size: 10px;
+}
+.tool-record summary > svg {
+  width: 16px;
+}
+.tool-record pre,
+.approval-card pre {
+  background: #edf2f799;
+  border: 1px solid #e0e8f0;
+  border-radius: 7px;
+  padding: 11px;
+  margin: 10px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 10px;
+  line-height: 1.7;
+  font-family: Consolas, monospace;
+  color: #778a9d;
+}
+.approval-section {
+  margin-bottom: 20px;
+}
+.approval-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #b99b68;
+  margin-bottom: 12px;
+}
+.approval-card {
+  padding: 15px;
+  border: 1px solid #e7d8b6;
+  border-radius: 11px;
+  background: #fffaf0;
+}
+.approval-card strong {
+  font-size: 13px;
+}
+.approval-card p {
+  font-size: 11px;
+  color: #a99570;
+  line-height: 1.8;
+  margin-top: 7px;
+}
+.button-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.result-summary {
+  padding: 20px 0;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.9;
+  color: #789786;
+}
+.result-summary svg {
+  width: 18px;
+  flex-shrink: 0;
+}
+.result-summary p {
+  white-space: pre-wrap;
+}
+.artifact-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 15px 13px;
+  background: #fff;
+  border: 1px solid #dce8ee;
+  border-radius: var(--radius-control);
+  margin-bottom: 10px;
+  color: #83acc0;
+}
+.artifact-card > div {
+  flex: 1;
+  min-width: 0;
+}
+.artifact-card strong {
+  display: block;
+  font-size: 12px;
+  word-break: break-all;
+  color: #728b9c;
+  font-weight: 500;
+}
+.artifact-card small {
+  display: block;
+  font-size: 10px;
+  color: #9aabb8;
+  margin-top: 6px;
+}
+.steer-form {
+  display: flex;
+  gap: 8px;
+  background: white;
+  border-top: 1px solid var(--line);
+  padding: 14px 20px;
+}
+.steer-form input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+.steer-form input::placeholder {
+  color: #a5b3c2;
+}
+.error-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: #b67e86;
+  background: #f8ecefaa;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 10px 0;
+  font-size: 11px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.error-message svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 20px;
+}

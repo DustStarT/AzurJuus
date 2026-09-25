@@ -24,7 +24,7 @@ def build_server(port=8879):
     @server.app.post('/__acceptance/suspended_life')
     async def suspended_life_fixture(payload:dict):
         from backend.database import session_scope
-        from backend.mind_models import LifeActivity
+        from backend.mind.mind_models import LifeActivity
         runtime=server.app.state.runs.cognition.runtime
         actor_id=payload['actorId']
         activity_id=runtime.life.start(actor_id,{'action':'rest','purpose':'保留在线进度的合成休息'},

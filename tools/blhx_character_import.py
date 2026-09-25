@@ -703,7 +703,7 @@ def build_runtime_persona(profile: CharacterProfile) -> dict:
 
 
 def resolve_personas(names: list[str], refresh: bool = False) -> tuple[list[dict], list[str]]:
-    from backend.character_identity import source_names
+    from backend.characters.character_identity import source_names
     personas: list[dict] = []
     missing: list[str] = []
     for name in names:

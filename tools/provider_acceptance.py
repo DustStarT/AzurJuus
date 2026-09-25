@@ -21,7 +21,7 @@ async def main(social_only=False):
     key = reveal(stored_key)
     report = {'host': urlsplit(base).hostname, 'model': model, 'checks': [], 'status': 'failed'}
     if social_only:
-        from backend.llm_runtime import AgentRuntime
+        from backend.tasks.llm_runtime import AgentRuntime
         runtime = AgentRuntime(60)
         settings = {'llmBaseUrl': base, 'llmModel': model, 'llmApiKey': key}
         actor = {'id': 'synthetic-secretary', 'name': '测试秘书', 'systemPrompt': '你是认真又亲切的港区秘书。使用简短自然的中文。'}

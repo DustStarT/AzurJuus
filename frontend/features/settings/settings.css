@@ -1,0 +1,334 @@
+.modal-scrim {
+  display: grid;
+  place-items: center;
+  padding: 30px;
+  background: #445d7840;
+}
+.settings-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(830px, 95vw);
+  height: min(690px, 90vh);
+  border: 1px solid #fffd;
+  overflow: hidden;
+
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  box-shadow: 0 10px 36px #304f7026;
+}
+.settings-modal > .drawer-header {
+  padding: 14px 20px;
+}
+.settings-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.settings-nav {
+  border-right: 1px solid var(--line);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+
+  gap: 4px;
+  padding: 12px 10px;
+  width: 180px;
+  background: #edf3f6;
+  overflow: auto;
+}
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  text-align: left;
+
+  padding: 10px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+}
+.settings-nav button.active {
+  background: var(--paper);
+  color: var(--blue);
+  box-shadow: inset 3px 0 var(--cyan);
+}
+.settings-nav button svg {
+  width: 18px;
+}
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+
+  padding: 20px 24px;
+}
+.settings-content h3 {
+  margin-top: 8px;
+  margin-bottom: 10px;
+
+  font-size: 17px;
+  color: var(--ink);
+}
+.settings-content > label {
+  display: block;
+  font-size: 12px;
+  margin-top: 20px;
+  color: #8495a5;
+}
+.settings-content label > input:not([type="checkbox"]),
+.settings-content label > textarea,
+.settings-content label > select,
+.persona-editor textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid #dae4ee;
+  border-radius: 7px;
+  background: white;
+  padding: 10px 11px;
+  color: #687f92;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.settings-content .configured {
+  color: #69ae99;
+  font-size: 10px;
+  margin-left: 10px;
+}
+.field-hint {
+  font-size: 10px;
+  color: #9aaab8;
+  line-height: 1.8;
+  margin-top: 10px;
+}
+.section-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 28px 0;
+}
+.settings-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 17px 28px;
+  background: #f2f7fb;
+}
+.settings-footer > .muted {
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.member-setting {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 15px 0;
+}
+.member-setting .avatar {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+.member-setting > div {
+  flex: 1;
+}
+.member-setting strong {
+  display: block;
+  font-size: 13px;
+  color: #6c8193;
+}
+.member-setting small {
+  display: block;
+  font-size: 10px;
+  color: #9dabb7;
+  margin-top: 5px;
+}
+.member-setting > input {
+  accent-color: #73bdd5;
+}
+.member-setting .text-button {
+  font-size: 11px;
+}
+.persona-editor {
+  padding: 15px;
+  margin-top: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+.persona-editor h4 {
+  font-size: 13px;
+  color: #8295a7;
+}
+.persona-editor > button {
+  margin-top: 12px;
+}
+.switch-row {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+}
+.switch-row strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.switch-row small {
+  display: block;
+  color: #a4b0bd;
+  font-size: 10px;
+  margin-top: 7px;
+}
+.switch-row > input {
+  accent-color: #7dc6d9;
+  width: 17px;
+  height: 17px;
+}
+.publish-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: #f8fbff;
+  border: 1px solid white;
+  width: 500px;
+  max-width: 90vw;
+  padding: 28px;
+
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow);
+}
+.publish-modal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.publish-modal h2 {
+  font-size: 20px;
+}
+.publish-modal textarea {
+  border: 1px solid #dce6ef;
+  border-radius: var(--radius-control);
+  padding: 15px;
+  font-size: 13px;
+  background: white;
+  line-height: 1.8;
+}
+.publish-modal > .primary-button {
+  align-self: flex-end;
+}
+.drawer-enter-active,
+.drawer-leave-active {
+  transition: opacity var(--duration-panel) var(--ease);
+}
+.drawer-enter-active .work-drawer,
+.drawer-leave-active .work-drawer {
+  transition: transform var(--duration-panel) var(--ease);
+}
+.drawer-enter-from,
+.drawer-leave-to {
+  opacity: 0;
+}
+.drawer-enter-from .work-drawer,
+.drawer-leave-to .work-drawer {
+  transform: translateX(100%);
+}
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity var(--duration-message) var(--ease);
+}
+.modal-enter-active .settings-modal,
+.modal-leave-active .settings-modal {
+  transition: transform var(--duration-panel) var(--ease);
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-from .settings-modal,
+.modal-leave-to .settings-modal {
+  transform: translateY(12px) scale(0.985);
+}
+@keyframes typing {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Shared form surfaces also cover character, mind and life settings. */
+.settings-content
+  :is(input:not([type="checkbox"]):not([type="range"]), textarea, select),
+.drawer-content :is(input:not([type="checkbox"]), textarea, select) {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--paper);
+  padding: 7px 9px;
+}
+.settings-content :is(p, pre, label),
+.drawer-content :is(p, pre, label) {
+  overflow-wrap: anywhere;
+}
+.settings-content details,
+.drawer-content details {
+  padding: 10px 0;
+}
+.settings-content summary,
+.drawer-content summary {
+  cursor: pointer;
+  color: var(--blue);
+}
+.tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.tab-row [aria-pressed="true"] {
+  color: var(--blue);
+  background: var(--selected);
+  box-shadow: inset 0 -2px var(--cyan);
+}
+.drawer-content form > label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+.drawer-content h3 {
+  margin: 16px 0 8px;
+  font-size: 16px;
+}
+.settings-content,
+.drawer-content {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.settings-content fieldset,
+.drawer-content fieldset {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+.settings-content legend,
+.drawer-content legend {
+  color: var(--blue);
+  padding: 0 5px;
+}

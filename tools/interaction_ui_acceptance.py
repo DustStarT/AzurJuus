@@ -90,10 +90,10 @@ async def check(base):
         import re
         await page.get_by_text(re.compile(r'本机时间：\d{4}-\d{2}-\d{2}')).wait_for()
         await page.get_by_label('暂停所有后台生活与反思',exact=True).check()
-        await page.get_by_label('每小时后台模型调用上限',exact=True).fill('42')
+        await page.get_by_label('每小时自主后台模型调用上限',exact=True).fill('42')
         await page.get_by_text('过去一小时后台调用明细',exact=True).click()
         await page.get_by_role('button',name='刷新调用统计',exact=True).click()
-        assert await page.get_by_label('每小时后台模型调用上限',exact=True).input_value()=='42'
+        assert await page.get_by_label('每小时自主后台模型调用上限',exact=True).input_value()=='42'
         await page.get_by_role('button',name='保存自主生活设置',exact=True).click()
         await page.get_by_role('status').filter(has_text='已保存').wait_for()
         assert (await (await page.request.get(base+'/api/life')).json())['settings']['hourlyCalls']==42

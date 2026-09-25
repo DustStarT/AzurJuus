@@ -25,14 +25,55 @@ def write(path,value):
     path.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
 
 
+def write_review_pairs(out, records, manifest):
+    pairs=[];key=[];rng=random.Random(20260922)
+    for tag in dict.fromkeys(r['id'] for r in records):
+        rows=[r for r in records if r['id']==tag]
+        if (len(rows)!=2 or {r['variant'] for r in rows}!={'baseline','full'} or
+                any('error' in r for r in rows) or
+                len({(r['actor'],r['prompt']) for r in rows})!=1):continue
+        rng.shuffle(rows)
+        pairs.append({'id':tag,'actor':rows[0]['actor'],'prompt':rows[0]['prompt'],'A':rows[0]['text'],'B':rows[1]['text']})
+        key.append({'id':tag,'A':rows[0]['variant'],'B':rows[1]['variant']})
+    write(out/'blind-pairs.json',pairs);write(out/'blind-key.json',key)
+    manifest['comparablePairs']=len(pairs)
+    write(out/'manifest.json',manifest)
+    for reviewer in (1,2):
+        path=out/f'reviewer-{reviewer}.csv'
+        # Refresh unfilled templates after a partial run; preserve real reviews.
+        completed=False
+        if path.exists():
+            with path.open(encoding='utf-8-sig',newline='') as f:
+                completed=any(any(row[1:]) for row in list(csv.reader(f))[1:])
+        if not completed:
+            with path.open('w',encoding='utf-8-sig',newline='') as f:
+                writer=csv.writer(f);writer.writerow(['id','character_choice_A_B_tie','relationship_A_B_tie','naturalness_A_B_tie','factual_consistency_A_B_tie','notes'])
+                writer.writerows([[p['id'],'','','','',''] for p in pairs])
+
+
 def main(args):
-    out=ROOT/'validation'/('mind-mistaken-identity-live' if args.identity_only else 'task-expression-live' if args.result_only else 'mind-interactions-live' if args.interaction_only else 'mind-life-live' if args.life_only else 'mind-runtime-full' if args.full_only else 'mind-runtime-smoke' if args.smoke else 'mind-runtime')
+    out=(Path(args.output_dir).resolve() if args.output_dir else ROOT/'validation'/
+        ('mind-mistaken-identity-live' if args.identity_only else 'task-expression-live' if args.result_only else 'mind-interactions-live' if args.interaction_only else 'mind-life-live' if args.life_only else 'mind-runtime-continuity' if args.continuity_only else 'mind-runtime-scenes' if args.scenes_only else 'mind-runtime-full' if args.full_only else 'mind-runtime-baseline' if args.baseline_only else 'mind-runtime-smoke' if args.smoke else 'mind-runtime'))
     out.mkdir(parents=True,exist_ok=True)
     manifest={'comparison':'actual ExpressionService legacy/full MindRuntime; no real tools',
-        'scenes':[] if args.identity_only or args.result_only or args.life_only or args.interaction_only else SCENES[:2] if args.smoke else SCENES,'repetitions':3,
-        'continuityTurns':0 if args.identity_only or args.result_only or args.smoke or args.life_only or args.interaction_only else 30,'humanReview':'pending',
+        'scenes':[] if args.identity_only or args.result_only or args.life_only or args.interaction_only or args.continuity_only else SCENES[:2] if args.smoke else SCENES,'repetitions':3,
+        'continuityTurns':0 if args.identity_only or args.result_only or args.smoke or args.life_only or args.interaction_only or args.scenes_only else 30,'humanReview':'pending',
         'goalProgress':'mechanism fixtures plus continuous life decisions; not skill certification',
         'status':'prepared_not_executed'}
+    if args.pair_only:
+        if not args.compare_with:raise ValueError('--pair-only requires --compare-with')
+        manifest=json.loads((out/'manifest.json').read_text(encoding='utf-8'))
+        current=[json.loads(line) for line in (out/'responses.jsonl').read_text(encoding='utf-8').splitlines()]
+        comparison_path=Path(args.compare_with).resolve()
+        other=[json.loads(line) for line in comparison_path.read_text(encoding='utf-8').splitlines()]
+        variants={r['variant'] for r in current}
+        if len(variants)==1:
+            counterpart=({'baseline','full'}-variants).pop()
+            other=[r for r in other if r['variant']==counterpart]
+        manifest['comparisonSource']=str(comparison_path)
+        write_review_pairs(out,[*current,*other],manifest)
+        print(json.dumps({k:v for k,v in manifest.items() if k!='scenes'},ensure_ascii=True),flush=True)
+        return
     write(out/'manifest.json',manifest)
     if not args.live:
         print('Prepared actual-runtime comparison; no provider calls.');return
@@ -63,7 +104,13 @@ def main(args):
         runtime.life.tick=idle
         c.settings_loader=lambda:provider
         # Fail fast before a large comparison if the configured provider is unavailable.
-        await c.expression.complete([{'role':'user','content':'只返回 JSON：{"ready":true}'}],provider)
+        for attempt in range(3):
+            try:
+                await c.expression.complete([{'role':'user','content':'只返回 JSON：{"ready":true}'}],provider)
+                break
+            except (ValueError,RuntimeError):
+                if attempt==2:raise
+                await asyncio.sleep(1+attempt)
         with session_scope() as s:
             actors=[{'id':a.id,'name':a.name} for a in s.scalars(select(Actor).where(Actor.kind=='agent',Actor.is_active.is_(True)))]
         if args.life_only:
@@ -140,7 +187,7 @@ def main(args):
             return
         if args.interaction_only:
             from backend.models import Conversation,Message
-            from backend.sticker_catalog import catalog
+            from backend.chat.sticker_catalog import catalog
             actor=actors[0]
             await case(actor,'请用一张“'+catalog()[0]['label']+'”表情回应我，直接发贴纸即可。','full','sticker')
             task,_=c.store.create({'actorId':actor['id'],'actors':[actor],'mode':'task','collaborative':False,
@@ -161,15 +208,16 @@ def main(args):
                 'groupMessages':group_messages,'groupCount':len(group_messages),'groupClosed':c.social_engine.topic(c.social_engine.begin(group))['status']})
             c.store.update(group['id'],status='completed')
             return
-        for index,(_,prompt) in enumerate(SCENES[:2] if args.smoke else SCENES):
-            for repeat in range(3):
-                actor=actors[(index+repeat)%len(actors)]
-                for variant in (('full',) if args.full_only else ('baseline','full')):
-                    runtime.enabled=True;c.cognition.configure(actor['id'],reset=True)
-                    await case(actor,prompt,variant,f'{index}:{repeat}')
-            print('Scene',index+1,'/ 24',flush=True)
-        if args.smoke:return
-        for variant in (('full',) if args.full_only else ('baseline','full')):
+        if not args.continuity_only:
+            for index,(_,prompt) in enumerate(SCENES[:2] if args.smoke else SCENES):
+                for repeat in range(3):
+                    actor=actors[(index+repeat)%len(actors)]
+                    for variant in (('full',) if args.full_only else ('baseline',) if args.baseline_only else ('baseline','full')):
+                        runtime.enabled=True;c.cognition.configure(actor['id'],reset=True)
+                        await case(actor,prompt,variant,f'{index}:{repeat}')
+                print('Scene',index+1,'/ 24',flush=True)
+            if args.smoke or args.scenes_only:return
+        for variant in (('full',) if args.full_only else ('baseline',) if args.baseline_only else ('baseline','full')):
             actor=actors[0];runtime.enabled=True;c.cognition.configure(actor['id'],reset=True)
             runtime.save_goal(actor['id'],{'title':'整理阅读关注点','motivation':'对已有资料感兴趣',
                 'nextStep':'挑选一个关注问题','sourceIds':['user-setting']})
@@ -191,39 +239,30 @@ def main(args):
         manifest['status']='generated_with_failures_pending_human_review'
     write(out/'manifest.json',manifest)
     comparison_records=list(records)
-    baseline_path=ROOT/'validation/mind-runtime/responses.jsonl'
-    if args.full_only and baseline_path.exists():
-        comparison_records.extend(r for r in map(json.loads,baseline_path.read_text(encoding='utf-8').splitlines()) if r['variant']=='baseline')
-        manifest['baselineSource']=str(baseline_path)
+    comparison_path=(Path(args.compare_with).resolve() if args.compare_with else
+        ROOT/'validation/mind-runtime/responses.jsonl' if args.full_only else None)
+    if comparison_path and comparison_path.exists():
+        counterpart='baseline' if args.full_only else 'full' if args.baseline_only else None
+        comparison_records.extend(r for r in map(json.loads,comparison_path.read_text(encoding='utf-8').splitlines())
+            if counterpart is None or r['variant']==counterpart)
+        manifest['comparisonSource']=str(comparison_path)
         write(out/'manifest.json',manifest)
-    pairs=[];key=[];rng=random.Random(20260922)
-    for tag in dict.fromkeys(r['id'] for r in comparison_records):
-        rows=[r for r in comparison_records if r['id']==tag]
-        if len(rows)!=2 or any('error' in r for r in rows):continue
-        rng.shuffle(rows)
-        pairs.append({'id':tag,'actor':rows[0]['actor'],'prompt':rows[0]['prompt'],'A':rows[0]['text'],'B':rows[1]['text']})
-        key.append({'id':tag,'A':rows[0]['variant'],'B':rows[1]['variant']})
-    write(out/'blind-pairs.json',pairs);write(out/'blind-key.json',key)
-    for reviewer in (1,2):
-        path=out/f'reviewer-{reviewer}.csv'
-        # Refresh unfilled templates after a partial run; preserve real reviews.
-        completed=False
-        if path.exists():
-            with path.open(encoding='utf-8-sig',newline='') as f:
-                completed=any(any(row[1:]) for row in list(csv.reader(f))[1:])
-        if not completed:
-            with path.open('w',encoding='utf-8-sig',newline='') as f:
-                writer=csv.writer(f);writer.writerow(['id','character_choice_A_B_tie','relationship_A_B_tie','naturalness_A_B_tie','factual_consistency_A_B_tie','notes'])
-                writer.writerows([[p['id'],'','','','',''] for p in pairs])
+    write_review_pairs(out,comparison_records,manifest)
     print(json.dumps({k:v for k,v in manifest.items() if k!='scenes'},ensure_ascii=True),flush=True)
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--live',action='store_true');parser.add_argument('--prepare',action='store_true')
+    parser.add_argument('--output-dir',help='Write this run to a separate report directory.')
     parser.add_argument('--smoke',action='store_true');parser.add_argument('--life-only',action='store_true')
     parser.add_argument('--life-seconds',type=int,default=150)
     parser.add_argument('--interaction-only',action='store_true')
     parser.add_argument('--identity-only',action='store_true',help='Synthetic mistaken-name greeting, no actual user messages.')
     parser.add_argument('--result-only',action='store_true',help='Long multi-file task expression; no fallback counts as success.')
     parser.add_argument('--full-only',action='store_true',help='Recheck full runtime, preserving the previous baseline comparison.')
+    parser.add_argument('--baseline-only',action='store_true',help='Run a fresh baseline using the current expression code.')
+    parser.add_argument('--continuity-only',action='store_true',help='Run only the thirty-turn continuity check in an isolated database.')
+    parser.add_argument('--scenes-only',action='store_true',help='Run only the 24 categories x three repetitions.')
+    parser.add_argument('--compare-with',help='Responses JSONL from the other variant for matched blind pairs.')
+    parser.add_argument('--pair-only',action='store_true',help='Rebuild blind pairs from existing response files without provider calls.')
     main(parser.parse_args())

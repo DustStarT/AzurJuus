@@ -19,9 +19,9 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend.credentials import reveal
-from backend.personality import expression_rules
-from backend.character_behavior import BEHAVIORS, behavior_context
-from backend.terminal_characters import TERMINAL, card, render, VERSION
+from backend.characters.personality import expression_rules
+from backend.characters.character_behavior import BEHAVIORS, behavior_context
+from backend.characters.terminal_characters import TERMINAL, card, render, VERSION
 
 SCENES = [
     ('辨识', '今天没有任务，想和你随便聊两句。'),

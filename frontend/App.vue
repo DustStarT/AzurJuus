@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
-import { api, useWorkspace } from "./api";
-import type { Agent, Conversation, Run } from "./types";
-import Icon from "./Icon.vue";
-import Avatar from "./Avatar.vue";
-import { artworkUrl } from './assets';
-import WorkDrawer from "./WorkDrawer.vue";
-import SpeechBubbles from "./SpeechBubbles.vue";
-import { liveSpeechIds } from './speechQueue';
-import MethodPanel from "./MethodPanel.vue";
-import SettingsPanel from "./SettingsPanel.vue";
-import AttachmentPicker from './AttachmentPicker.vue';
-import StickerPicker from './StickerPicker.vue';
-import SocialControls from "./SocialControls.vue";
-import CreateGroup from './CreateGroup.vue';
+import { api, useWorkspace } from "./shared/api";
+import type { Agent, Conversation, Run } from "./shared/types";
+import Icon from "./shared/Icon.vue";
+import Avatar from "./shared/Avatar.vue";
+import { artworkUrl } from './shared/assets';
+import WorkDrawer from "./features/tasks/WorkDrawer.vue";
+import SpeechBubbles from "./features/chat/SpeechBubbles.vue";
+import { liveSpeechIds } from './features/chat/speechQueue';
+import MethodPanel from "./features/tasks/MethodPanel.vue";
+import SettingsPanel from "./features/settings/SettingsPanel.vue";
+import AttachmentPicker from './features/chat/AttachmentPicker.vue';
+import StickerPicker from './features/chat/StickerPicker.vue';
+import SocialControls from "./features/chat/SocialControls.vue";
+import ConversationList from './features/chat/ConversationList.vue';
+import BackdropSettings from './features/chat/BackdropSettings.vue';
+import { backdropPosition } from './features/chat/backdropPreferences';
+import MomentsPage from './features/social/MomentsPage.vue';
 const { workspace, runs, online, error, streams, refresh, start, stop } =
   useWorkspace();
 const methodActor = ref<Agent>();
@@ -21,18 +24,21 @@ const attachmentIds = ref<string[]>([]);
 const view = ref("chat"),
   activeId = ref(""),
   postId = ref(""),
-  search = ref(""),
-  filter = ref("all"),
-  showFilters = ref(false),
   showSettings = ref(false),
   showWork = ref(false),
   showMembers = ref(false),
   selectedRunId = ref("");
 const draft = ref(""),
-  mode = ref("chat"),
+  mode = ref("auto"),
   sending = ref(false),
   composing = ref(false),
   notice = ref("");
+const modeMenu = ref<HTMLDetailsElement>();
+function setMode(value: string) { mode.value = value; modeMenu.value?.removeAttribute('open'); }
+watch(activeId, () => modeMenu.value?.removeAttribute('open'));
+const pendingRequest = ref<{ fingerprint: string; id: string }>();
+const routeLabels: Record<string, string> = { chat:'闲聊', followup:'结果追问', task:'任务',
+  swarm:'协作', guidance:'任务引导', clarify:'澄清' };
 const scroller = ref<HTMLElement>(),
   pageSize = ref(100),
   atBottom = ref(true),
@@ -59,17 +65,7 @@ const conversation = computed(() =>
   data.value?.conversations.find((c) => c.id === activeId.value),
 );
 const conversations = computed(() =>
-  (data.value?.conversations || []).filter(
-    (c) =>
-      !c.archived && (!search.value ||
-        [c.title, c.preview].some((s) =>
-          s?.toLowerCase().includes(search.value.toLowerCase()),
-        )) &&
-      (filter.value === "all" ||
-        filter.value === c.kind ||
-        (filter.value === "favorite" &&
-          c.memberIds.some((id) => agentMap.value[id]?.favorite))),
-  ),
+  (data.value?.conversations || []).filter(c => !c.archived),
 );
 const peer = computed(() =>
   conversation.value?.memberIds
@@ -77,7 +73,12 @@ const peer = computed(() =>
     .find((a) => a && a.id !== "commander"),
 );
 const backdropFailed = ref(false);
-watch(() => peer.value?.illustrationUrl, () => { backdropFailed.value = false; });
+const backdropStyle = computed(() => {
+  const { x, y, zoom } = backdropPosition(peer.value?.id);
+  return { objectPosition: `${x}% ${y}%`, transform: `scale(${zoom / 100})`, transformOrigin: `${x}% ${y}%` };
+});
+const backdropUnavailable = ref(false);
+watch(() => peer.value?.illustrationUrl, () => { backdropFailed.value = false; backdropUnavailable.value = false; });
 const messages = computed(() => data.value?.messages[activeId.value] || []);
 const visibleMessages = computed(() => {
   const rows = messages.value.slice(-pageSize.value).map(m => {
@@ -145,18 +146,6 @@ const time = (value: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
-const friend = (c: Conversation): Agent | undefined =>
-  c.memberIds
-    .map((id) => agentMap.value[id])
-    .find((a) => a && a.id !== "commander");
-const subtitle = (c: Conversation) =>
-  runs.value.find(
-    (r) =>
-      r.conversationId === c.id &&
-      ["running", "waiting_approval"].includes(r.status),
-  )?.status === "running"
-    ? "正在处理你的委托…"
-    : c.preview || "今天想聊些什么？";
 function openRun(run?: Run) {
   selectedRunId.value = run?.id || taskRuns.value[0]?.id || "";
   showWork.value = true;
@@ -252,10 +241,12 @@ async function send() {
   )
     return;
   const content = draft.value.trim();
+  const fingerprint = JSON.stringify([activeId.value, content, attachmentIds.value, mode.value]);
+  if (pendingRequest.value?.fingerprint !== fingerprint) pendingRequest.value = { fingerprint, id: crypto.randomUUID() };
   sending.value = true;
   notice.value = "";
   try {
-    const result = await api<{ runId: string; conversationId: string }>(
+    const result = await api<{ runId: string | null; conversationId: string; route?:{kind:string;status:string}; proposalId?:string }>(
       "/api/messages/send",
       {
         conversationId: activeId.value,
@@ -263,15 +254,17 @@ async function send() {
         attachments: attachmentIds.value,
         mentions: conversation.value.kind === 'group'
           ? agents.value.filter(a => content.includes(`@${a.name}`)).map(a => a.id) : [],
-        mode: mode.value === "chat" ? "chat" : "task",
+        mode: mode.value === "swarm" ? "swarm" : mode.value,
         collaborative: mode.value === "swarm",
-        requestId: crypto.randomUUID(),
+        requestId: pendingRequest.value.id,
       },
     );
+    pendingRequest.value = undefined;
     draft.value = "";
     attachmentIds.value = [];
     activeId.value = result.conversationId;
-    if (mode.value !== 'chat' || guidingTask.value) selectedRunId.value = result.runId;
+    if (result.runId && (['task','swarm','guidance'].includes(result.route?.kind || '')
+      || mode.value === 'task' || mode.value === 'swarm')) selectedRunId.value = result.runId;
     await refresh();
     atBottom.value = true;
     await nextTick();
@@ -281,6 +274,13 @@ async function send() {
   } finally {
     sending.value = false;
   }
+}
+async function decideProposal(requestId:string, action:'confirm'|'cancel') {
+  try {
+    const result = await api<{runId?:string;conversationId:string}>(`/api/messages/route/${encodeURIComponent(requestId)}/${action}`, {});
+    if (result.runId) { selectedRunId.value = result.runId; activeId.value = result.conversationId; }
+    await refresh();
+  } catch(e) { notice.value = (e as Error).message; await refresh(); }
 }
 function keydown(e: KeyboardEvent) {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !composing.value && mentionOptions.value.length) {
@@ -314,7 +314,6 @@ function globalKey(e: KeyboardEvent) {
     showSettings.value = false;
     showWork.value = false;
     showMembers.value = false;
-    showFilters.value = false;
   }
   if (e.key === "Tab") {
     const modal = document.querySelector<HTMLElement>('[aria-modal="true"]');
@@ -450,72 +449,10 @@ onUnmounted(() => {
           </button>
         </div>
         <section v-show="view === 'chat'" class="chat-layout">
-          <aside class="conversation-panel">
-            <CreateGroup :agents="agents" @created="async id => { await refresh(); activeId=id; mobileChat=true; }" />
-            <div class="list-tools">
-              <div class="search-field">
-                <Icon name="search" :size="18" /><input
-                  v-model="search"
-                  aria-label="搜索会话"
-                  placeholder="搜索伙伴或频道"
-                />
-              </div>
-              <button
-                class="icon-button"
-                :class="{ selected: showFilters }"
-                aria-label="筛选会话"
-                @click="showFilters = !showFilters"
-              >
-                <Icon name="filter" />
-              </button>
-            </div>
-            <div v-if="showFilters" class="filter-row">
-              <button
-                v-for="f in [
-                  { id: 'all', text: '全部' },
-                  { id: 'dm', text: '私聊' },
-                  { id: 'group', text: '群聊' },
-                  { id: 'favorite', text: '收藏' },
-                ]"
-                :key="f.id"
-                :class="{ active: filter === f.id }"
-                @click="filter = f.id"
-              >
-                {{ f.text }}
-              </button>
-            </div>
-            <div class="list-heading">
-              <span>消息列表</span
-              ><small>{{ conversations.length }} 个会话</small>
-            </div>
-            <div class="conversation-list">
-              <button
-                v-for="c in conversations"
-                :key="c.id"
-                class="conversation-card"
-                :class="{ active: c.id === activeId }"
-                @click="selectConversation(c)"
-              >
-                <Avatar :agent="friend(c)" :group="c.kind === 'group'" :hub="c.id === 'port-hub'" />
-                <div class="conversation-copy">
-                  <div class="conversation-title">
-                    <strong>{{ c.title }}</strong
-                    ><span v-if="c.kind === 'group'" class="group-tag"
-                      >群聊</span
-                    >
-                  </div>
-                  <p>{{ subtitle(c) }}</p>
-                </div>
-                <span v-if="c.unreadCount" class="unread-badge">{{
-                  c.unreadCount > 99 ? "99+" : c.unreadCount
-                }}</span>
-              </button>
-              <div v-if="!conversations.length" class="empty-state compact">
-                <Icon name="search" />
-                <p>没有找到相关会话</p>
-              </div>
-            </div>
-          </aside>
+          <ConversationList
+            :snapshot="data!" :runs="runs" :agents="agents" :active-id="activeId" :user-id="userId"
+            @select="selectConversation" @created="async id => { await refresh(); activeId=id; mobileChat=true; }"
+          />
           <section class="chat-panel" v-if="conversation">
             <header class="chat-header">
               <button
@@ -537,6 +474,7 @@ onUnmounted(() => {
                 </p>
               </div>
               <div class="chat-header-actions">
+                <BackdropSettings v-if="conversation.kind === 'dm' && peer?.illustrationUrl" :key="peer.id" :actor="peer" />
                 <button v-if="conversation.kind === 'group' && conversation.id !== 'port-hub'" class="text-button danger" @click="removeGroup">删除群聊</button>
                 <button
                   class="icon-button"
@@ -563,11 +501,12 @@ onUnmounted(() => {
               :class="{ 'chat-scene--group': conversation.kind === 'group' }"
             >
               <img
-                v-if="conversation.kind !== 'group' && peer?.illustrationUrl"
+                v-if="conversation.kind !== 'group' && peer?.illustrationUrl && !backdropUnavailable"
                 class="character-backdrop"
+                :style="backdropStyle"
                 :src="backdropFailed ? peer.illustrationUrl : artworkUrl(peer.illustrationUrl)"
                 decoding="async"
-                @error="backdropFailed = true"
+                @error="backdropFailed ? backdropUnavailable = true : backdropFailed = true"
                 alt=""
               />
               <div
@@ -589,8 +528,8 @@ onUnmounted(() => {
                 </div>
                 <div v-if="!messages.length" class="welcome-note">
                   <Icon name="chat" :size="36" />
-                  <h3>{{ peer?.name || "伙伴们" }}在这里</h3>
-                  <p>聊聊今天，或交给她一项新的委托。</p>
+                  <h3>{{ conversation.kind === 'group' ? '群聊' : peer?.name ? `和${peer.name}聊聊` : '开始聊天' }}</h3>
+                  <p>发条消息，聊聊今天。</p>
                 </div>
                 <article
                   v-for="m in visibleMessages"
@@ -606,13 +545,27 @@ onUnmounted(() => {
                       <strong>{{
                         agentMap[m.speakerId]?.name || "港区消息"
                       }}</strong
-                      ><time>{{ time(m.createdAt) }}</time>
+                      ><time>{{ time(m.createdAt) }}</time><small v-if="m.metadata?.routeKind" class="route-badge">{{ routeLabels[m.metadata.routeKind] || m.metadata.routeKind }}</small>
+                    </div>
+                    <div v-if="m.type === 'route_proposal' && m.metadata?.routeProposal" class="message-bubble route-proposal">
+                      <strong>协作确认</strong>
+                      <p>本条委托将分享给 {{ m.metadata.routeProposal.actorIds.map(id => agentMap[id]?.name || id).join('、') }}：</p>
+                      <p>{{ m.metadata.routeProposal.summary }}</p>
+                      <div v-if="m.metadata.routeProposal.status === 'proposed'" class="route-actions">
+                        <button type="button" class="soft-button" @click="decideProposal(m.metadata!.routeProposal!.requestId,'confirm')">确认协作</button>
+                        <button type="button" class="text-button" @click="decideProposal(m.metadata!.routeProposal!.requestId,'cancel')">取消</button>
+                      </div>
+                      <small v-else>{{ m.metadata.routeProposal.status === 'executed' ? '已确认' : m.metadata.routeProposal.status === 'expired' ? '已过期' : '已取消' }}</small>
                     </div>
                     <details v-if="m.type === 'task_progress' && !m.metadata?.expression"><summary>历史工作回复</summary><div class="message-bubble">{{ m.body }}</div></details>
-                    <SpeechBubbles v-else :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
+                    <SpeechBubbles v-else-if="m.type !== 'route_proposal'" :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
                     <a v-for="file in m.metadata?.attachments || []" :key="file.id" :href="`/api/attachments/${file.id}?conversationId=${encodeURIComponent(file.conversationId)}`" target="_blank" rel="noreferrer">附件 · {{file.name}}</a>
                   </div>
                 </article>
+                <div v-for="pending in (data?.pendingReplies || []).filter(p => p.conversationId === activeId)"
+                  :key="pending.actorId + pending.sourceMessageId" class="typing-indicator" role="status">
+                  {{ agentMap[pending.actorId]?.name || '这位成员' }}正在处理任务，稍后若话题仍相关会决定是否回复。
+                </div>
                 <div
                   v-if="working && !activeStreams.some(([, s]) => !s.done && s.text)"
                   class="typing-indicator"
@@ -626,7 +579,7 @@ onUnmounted(() => {
                   <button v-else class="text-button" @click="stopChat(working.id)">停止回复</button>
                 </div>
                 <button
-                  v-for="r in taskRuns.slice(0, 3)"
+                  v-for="r in taskRuns.filter((item) => !['completed', 'cancelled'].includes(item.status)).slice(0, 3)"
                   :key="r.id"
                   class="inline-task"
                   @click="openRun(r)"
@@ -700,24 +653,29 @@ onUnmounted(() => {
                 :conversation-id="conversation.id" @changed="refresh" />
             </div>
             <form class="composer" @submit.prevent="send">
-              <AttachmentPicker :conversation-id="activeId" v-model="attachmentIds" />
-              <StickerPicker :key="activeId" @select="insertSticker" />
-              <p v-if="guidingTask" class="field-hint">继续发送将补充到当前协作任务。暂停中的任务可在工作抽屉继续。</p>
-              <p v-else-if="teamTask" class="field-hint">任务已结束，可以继续讨论结果。新委托请从其他会话发起。</p>
-              <div v-else class="composer-mode">
+              <div class="composer-tools" aria-label="消息工具">
+                <AttachmentPicker :conversation-id="activeId" v-model="attachmentIds" />
+                <StickerPicker :key="activeId" @select="insertSticker" />
+                <details ref="modeMenu" class="composer-mode composer-tool">
+                <summary :aria-label="`处理方式：${mode === 'auto' ? '自动判断' : mode === 'chat' ? '闲聊' : mode === 'task' ? '任务' : '协作'}`" :title="`处理方式：${mode === 'auto' ? '自动判断' : mode === 'chat' ? '闲聊' : mode === 'task' ? '任务' : '协作'}`"><Icon :name="mode === 'auto' ? 'activity' : mode === 'chat' ? 'chat' : mode === 'task' ? 'folder' : 'users'" :size="17" /></summary>
+                <div class="composer-tool-panel">
+                  <p v-if="guidingTask" class="field-hint">当前任务可继续引导或询问进度。</p>
                 <button
                   type="button"
                   v-for="item in [
+                    { id: 'auto', text: '自动判断', icon: 'activity' },
                     { id: 'chat', text: '闲聊', icon: 'chat' },
                     { id: 'task', text: '任务', icon: 'folder' },
                     { id: 'swarm', text: '协作', icon: 'users' },
                   ] as const"
                   :key="item.id"
                   :class="{ active: mode === item.id }"
-                  @click="mode = item.id"
+                  @click="setMode(item.id)"
                 >
                   <Icon :name="item.icon" :size="15" />{{ item.text }}</button
                 >
+                </div>
+              </details>
               </div>
               <div class="composer-input">
                 <div v-if="mentionOptions.length" class="mention-options" aria-label="提及人物">
@@ -730,9 +688,7 @@ onUnmounted(() => {
                   v-model="draft"
                   rows="2"
                   :placeholder="
-                    guidingTask ? '补充要求、纠正方向或提供线索…' : teamTask || mode === 'chat'
-                      ? '想说些什么呢…'
-                      : '描述任务、文件位置和期望的结果…'
+                    mode === 'task' || mode === 'swarm' ? '描述委托、文件位置和期望结果…' : '想说些什么呢…'
                   "
                   aria-label="消息输入"
                   @keydown="keydown"
@@ -748,9 +704,8 @@ onUnmounted(() => {
               </div>
               <footer class="composer-footer">
                 <span>{{
-                  guidingTask ? '引导当前任务 · 保留已有进度' : teamTask || mode === "chat"
-                    ? "仅聊天 · 不操作文件"
-                    : "任务内自主执行 · 重要操作集中确认"
+                  mode === 'auto' ? '自动判断聊天、追问或委托 · 工具权限仍按任务审批'
+                    : mode === 'chat' ? '仅聊天 · 不操作文件' : '任务内自主执行 · 重要操作集中确认'
                 }}</span
                 ><span>Enter 发送 · Shift + Enter 换行</span>
               </footer>
@@ -764,14 +719,7 @@ onUnmounted(() => {
             </button>
           </div>
         </section>
-        <section v-if="view === 'circle'" class="circle-layout">
-          <div class="empty-state">
-            <Icon name="circle" :size="56" />
-            <h2>动态功能完善中</h2>
-            <p>港区朋友圈暂时关闭。</p>
-          </div>
-
-        </section>
+        <MomentsPage v-if="view === 'circle'" :agents="agents" :user="data?.user" />
       </template>
     </main>
     <Transition name="drawer"><MethodPanel v-if="methodActor" :key="methodActor.id" :actor-id="methodActor.id" :name="methodActor.name" @close="methodActor = undefined" @inspect="selectedRunId = $event; methodActor = undefined; showWork = true" /></Transition>

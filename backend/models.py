@@ -133,7 +133,7 @@ class WorkspaceSetting(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     resolution_preset: Mapped[str] = mapped_column(String(32), default="balanced", nullable=False)
-    max_connected_agents: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    max_connected_agents: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
     connected_agent_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     character_roster_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     llm_provider: Mapped[str] = mapped_column(String(120), default="OpenAI Compatible", nullable=False)

@@ -26,7 +26,7 @@ def main():
     from desktop import start_local_server, stop_local_server, wait_for_server
     server,thread,url,_=start_local_server(port=0)
     report={'model':model,'scope':'真实模型社会行动协议；非自主开场或自然度人工验收','passed':False,
-        'protocolHash':hashlib.sha256((ROOT/'backend/social_engine.py').read_bytes()).hexdigest()}
+        'protocolHash':hashlib.sha256((ROOT/'backend/social/social_engine.py').read_bytes()).hexdigest()}
     engine=server.app.state.runs.social_engine
     original_generate=engine.generate
     async def capture_shape(messages,settings):

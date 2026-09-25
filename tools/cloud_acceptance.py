@@ -12,8 +12,8 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from backend.credentials import reveal
-from backend.run_coordinator import RunCoordinator
-from backend.run_store import RunStore
+from backend.tasks.run_coordinator import RunCoordinator
+from backend.tasks.run_store import RunStore
 
 
 async def main(collaborative=False, chat=False):
