@@ -37,7 +37,7 @@ async def main():
     os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///'+(home/'app.db').as_posix(),
         AZURJUUS_WORKSPACE_STATE_PATH=str(home/'state/workspace.json'),AZURJUUS_WORKSPACE_ROOT=str(home),
         AZURJUUS_SOCIAL_ENABLED='0',AZURJUUS_REFLECTION_ENABLED='0',AZURJUUS_SKILL_TRIALS_ENABLED='0',
-        AZURJUUS_EXECUTION_BACKEND='hermes',AZURJUUS_EXPRESSION_ENABLED='1')
+        AZURJUUS_EXECUTION_BACKEND='deepseek-harness',AZURJUUS_EXPRESSION_ENABLED='1')
     from backend.app import create_app
     from backend.characters.terminal_characters import activate
     from fastapi.testclient import TestClient

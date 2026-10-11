@@ -36,7 +36,6 @@ from backend.models import (
 )
 from backend.tasks.skill_runtime import SkillRuntime
 from backend.social.social_runtime import SocialRuntime
-from backend.tasks.tool_gateway import ToolGateway
 from backend.platform.service_utils import (
     default_ui_session, isoformat, now_utc, preview_text,
 )
@@ -49,6 +48,9 @@ from backend.tasks.service import TaskService
 
 EXTRA_SETTINGS_KEYS = (
     "visionEnabled",
+    "chatTimeoutSeconds",
+    "runTimeoutSeconds",
+    "maxTaskMembers",
     "searchApiKey",
     "mapApiKey",
     "recommendationApiKey",
@@ -60,7 +62,6 @@ EXTRA_SETTINGS_KEYS = (
 class ServiceBundle:
     runtime: AgentRuntime
     memory: MemoryStore
-    tools: ToolGateway
     social: SocialRuntime
     skills: SkillRuntime
     runtime_context: dict[str, Any]
@@ -262,6 +263,8 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
         actor_id: str | None = None,
     ) -> dict[str, Any]:
         workspace = self.get_workspace(session)
+        from backend.api.input_contracts import checked, WorkspaceInput
+        workspace_payload = checked(workspace_payload, WorkspaceInput)
         settings_extras = self._workspace_settings_extras(workspace)
         settings = workspace_payload.get("settings") if isinstance(workspace_payload, dict) else None
         if isinstance(settings, dict):
@@ -270,7 +273,8 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
                 remember(session,workspace)
             workspace.resolution_preset = str(settings.get("resolutionPreset") or workspace.resolution_preset)
             workspace.max_connected_agents = int(settings.get("maxConnectedAgents") or workspace.max_connected_agents)
-            workspace.connected_agent_ids = [str(item) for item in settings.get("connectedAgentIds") or workspace.connected_agent_ids]
+            if 'connectedAgentIds' in settings:
+                workspace.connected_agent_ids = settings['connectedAgentIds']
             workspace.character_roster_text = str(settings.get("characterRosterText") or workspace.character_roster_text)
             workspace.llm_provider = str(settings.get("llmProvider") or workspace.llm_provider)
             workspace.llm_model = str(settings.get("llmModel") or workspace.llm_model)
@@ -291,7 +295,7 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
             workspace.tool_base_url = str(settings.get("toolBaseUrl") or workspace.tool_base_url)
             if settings.get("toolApiKey"):
                 workspace.tool_api_key = protect(str(settings["toolApiKey"]))
-            workspace.authorized_workspace_root = str(settings.get("authorizedWorkspaceRoot") or workspace.authorized_workspace_root)
+            workspace.authorized_workspace_root = settings.get("authorizedWorkspaceRoot", workspace.authorized_workspace_root)
             workspace.secretary_agent_id = str(settings.get("secretaryAgentId") or workspace.secretary_agent_id)
             workspace.allow_idle_social = bool(settings.get("allowIdleSocial", workspace.allow_idle_social))
             workspace.social_interval_minutes = int(settings.get("socialIntervalMinutes") or workspace.social_interval_minutes)

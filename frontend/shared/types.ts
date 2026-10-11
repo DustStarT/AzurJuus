@@ -68,8 +68,26 @@ export interface Assignment {
   acceptance: string[];
   status: string;
   result?: Result;
+  handoff?: { assignmentId: string; path: string; sha256?: string }[];
+  helpRequestId?: string;
+}
+export interface HelpRequest {
+  id: string;
+  assignmentId: string;
+  requesterId: string;
+  brief: string;
+  reason?: string;
+  candidateIds: string[];
+  status: string;
+  actorId?: string;
+  handoff?: { assignmentId: string; path: string; sha256?: string }[];
+  createdAt?: number;
+  resolvedAt?: number;
 }
 export interface Run {
+  stageReviews?: Record<string, { id: string; key: string; title: string; status: string;
+    secretary?: { actorId: string; approved: boolean; reason: string }; userNote?: string;
+    material: { request?: string; brief?: string; result?: Result; artifacts?: Artifact[]; assignments?: Assignment[] } }>;
   teamConversationId?: string;
   expressionError?: string;
   id: string;
@@ -88,6 +106,9 @@ export interface Run {
   runtimeStages?: Record<string, { stage: string; label: string; actorId: string; at: number }>;
   methods?: Record<string, { actorId: string; names: string[] }>;
   learningCandidates?: { skillId: string; name: string; actorId: string; status: string }[];
+  helpRequests?: HelpRequest[];
+  planRevision?: number;
+  planHistory?: { revision: number; at: number; kind: string; assignments?: string[] }[];
 }
 export interface ToolCall {
   id: string;

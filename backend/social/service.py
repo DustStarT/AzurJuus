@@ -146,7 +146,7 @@ class SocialService:
         from backend.characters.character_identity import roster_actors
         post=session.get(SocialPost,post_id)
         actor=session.get(Actor,actor_id)
-        if not post or not actor or actor.kind!='agent' or not actor.is_active or post.author_id==actor_id:
+        if not post or not actor or actor.kind!='agent' or not actor.is_active or (action=='like' and post.author_id==actor_id):
             return False
         if actor_id not in {member.id for member in roster_actors(session)}:return False
         if not self.post_visible(session,post,actor_id):return False

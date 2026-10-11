@@ -21,7 +21,7 @@ with sqlite3.connect((ROOT / '.azurjuus/azurjuus.db').as_uri() + '?mode=ro', uri
             db.backup(copied)
 os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///' + (STATE / 'app.db').as_posix(),
     AZURJUUS_WORKSPACE_STATE_PATH=str(STATE / 'state' / 'workspace.json'), AZURJUUS_WORKSPACE_ROOT=str(WORK),
-    AZURJUUS_EXECUTION_BACKEND='hermes')
+    AZURJUUS_EXECUTION_BACKEND='deepseek-harness')
 if os.getenv('AZURJUUS_QT_REAL_SERVICES') != '1':
     os.environ.update(AZURJUUS_REDIS_URL='', AZURJUUS_CHROMA_URL='', AZURJUUS_SOCIAL_ENABLED='0')
 import desktop

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime, timezone
+import time
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -272,7 +274,7 @@ class TaskService:
             summary=cleaned_summary,
             prompt_patch=cleaned_patch,
             status="pending",
-            extra_json={"kind": "public-skill-improvement"},
+            extra_json={"kind": "public-skill-improvement", "secretaryReview": {"status": "queued"}},
         )
         session.add(proposal)
         session.flush()
@@ -292,7 +294,7 @@ class TaskService:
             },
             status="pending",
             requires_user=True,
-            requires_secretary=False,
+            requires_secretary=True,
         )
         session.add(approval)
         session.flush()
@@ -306,6 +308,113 @@ class TaskService:
             "approvalId": approval.id,
             "snapshot": self.build_snapshot(session),
         }
+
+    def resolve_skill_proposal(
+        self,
+        session: Session,
+        *,
+        proposal_id: str,
+        decision: str,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Advance a public-skill proposal through the two review gates.
+
+        Secretary review is deliberately separate from the user's decision.
+        An approved proposal is the only state consumed by the public skill
+        selector; rejected and rolled-back revisions remain auditable.
+        """
+        proposal = session.get(SkillProposal, proposal_id)
+        if proposal is None:
+            raise ValueError("Skill proposal not found.")
+        approval = session.get(ApprovalRequest, proposal.approval_id) if proposal.approval_id else None
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("Invalid proposal decision.")
+        cleaned = str(note or "").strip()[:1200]
+        extra = dict(proposal.extra_json or {})
+        review = extra.get("secretaryReview") or {}
+        if proposal.status != "pending":
+            raise ValueError("Proposal is no longer pending user review.")
+        if decision == "approved":
+            import hashlib
+            if review.get("status") != "approved" or review.get("patchHash") != hashlib.sha256(proposal.prompt_patch.encode()).hexdigest():
+                raise ValueError("Secretary review must approve the current proposal first.")
+            source_id = extra.get("sourceSkillId")
+            if source_id:
+                source = session.scalar(select(ActorSkill).where(ActorSkill.actor_id == proposal.actor_id, ActorSkill.skill_id == source_id))
+                if not source or not source.is_enabled or hashlib.sha256(source.prompt_patch.encode()).hexdigest() != extra.get("sourcePatchHash"):
+                    raise ValueError("Source method changed or was disabled; submit it for review again.")
+        proposal.status = decision
+        proposal.decision_note = cleaned or ("用户确认共享。" if decision == "approved" else "用户拒绝共享。")
+        extra["userReview"] = {"status": decision, "note": cleaned, "at": time.time(), "actorId": DEFAULT_USER["id"]}
+        proposal.extra_json = extra
+        if decision == 'rejected':
+            self._unlink_public_proposal(session, proposal)
+        if approval:
+            approval.payload_json = {**(approval.payload_json or {}), "approvedByUser": decision == "approved", "userNote": cleaned}
+            approval.status = decision
+            approval.resolved_at = datetime.now(timezone.utc)
+        proposal.resolved_at = datetime.now(timezone.utc)
+        session.flush()
+        return self.serialize_skill_proposal(proposal)
+
+    def record_skill_secretary_review(self, session: Session, *, proposal_id: str, secretary_id: str,
+                                      decision: str, note: str, patch_hash: str) -> dict[str, Any]:
+        """Internal model verdict. This capability is never exposed as a client decision."""
+        import hashlib
+        proposal = session.get(SkillProposal, proposal_id)
+        if not proposal or proposal.status != "pending":
+            raise ValueError("Proposal is no longer pending review.")
+        if decision not in {"approved", "rejected"} or not session.get(Actor, secretary_id):
+            raise ValueError("Invalid secretary review.")
+        if hashlib.sha256(proposal.prompt_patch.encode()).hexdigest() != patch_hash:
+            raise ValueError("Proposal changed while it was being reviewed.")
+        cleaned = str(note).strip()[:1200]
+        proposal.extra_json = {**(proposal.extra_json or {}), "secretaryReview": {
+            "status": decision, "note": cleaned, "at": time.time(), "actorId": secretary_id, "patchHash": patch_hash}}
+        proposal.reviewer_actor_id = secretary_id
+        proposal.decision_note = cleaned
+        approval = session.get(ApprovalRequest, proposal.approval_id)
+        if approval:
+            approval.payload_json = {**(approval.payload_json or {}), "approvedBySecretary": decision == "approved", "secretaryNote": cleaned,
+                                     "secretaryId": secretary_id, "patchHash": patch_hash}
+        if decision == "rejected":
+            proposal.status = "rejected"
+            self._unlink_public_proposal(session, proposal)
+            proposal.resolved_at = datetime.now(timezone.utc)
+            if approval:
+                approval.status = "rejected"
+                approval.resolved_at = proposal.resolved_at
+        session.flush()
+        return self.serialize_skill_proposal(proposal)
+
+    def rollback_skill_proposal(self, session: Session, *, proposal_id: str, note: str = "") -> dict[str, Any]:
+        proposal = session.get(SkillProposal, proposal_id)
+        if proposal is None:
+            raise ValueError("Skill proposal not found.")
+        if proposal.status != "approved":
+            raise ValueError("Only an approved proposal can be rolled back.")
+        proposal.status = "rolled_back"
+        proposal.resolved_at = datetime.now(timezone.utc)
+        proposal.decision_note = str(note or "用户回滚公有方法扩展。")[:1200]
+        proposal.extra_json = {**(proposal.extra_json or {}), "rollback": {"at": time.time(), "note": proposal.decision_note}}
+        self._unlink_public_proposal(session, proposal)
+        if proposal.approval_id:
+            approval = session.get(ApprovalRequest, proposal.approval_id)
+            if approval:
+                approval.status = "rejected"
+                approval.resolved_at = approval.resolved_at or datetime.now(timezone.utc)
+        session.flush()
+        return self.serialize_skill_proposal(proposal)
+
+    def _unlink_public_proposal(self, session: Session, proposal: SkillProposal):
+        source_id = (proposal.extra_json or {}).get('sourceSkillId')
+        if not source_id:
+            return
+        source = session.scalar(select(ActorSkill).where(ActorSkill.actor_id == proposal.actor_id, ActorSkill.skill_id == source_id))
+        if source and (source.extra_json or {}).get('publicProposalId') == proposal.id:
+            extra = dict(source.extra_json)
+            extra.pop('publicProposalId', None)
+            source.extra_json = extra
 
     def _actor_skill_rows(self, session: Session, actor_id: str) -> list[ActorSkill]:
         return session.scalars(

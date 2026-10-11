@@ -156,11 +156,11 @@ class MindRuntime:
             s.add(MindCall(id=call_id, actor_id=actor_id, kind=kind, at=time.time(),
                 data={'background':background,'status':'running'}))
         rules = {
-            'profile':'从人物背景编译可纠正的作者解释。身份与核心价值稳定；保留例外和不确定性。提炼人物优先注意什么、遇到歧义如何核实、价值冲突时如何取舍及惯用方法失败后的替代办法；不能把人物背景当作真实工具能力。原作中对指挥官说的台词只反映那段关系，不意味着人物与同伴聊天也始终围着指挥官转。',
+            'profile':'从人物背景编译可纠正的作者解释。身份与核心价值稳定；保留例外和不确定性。关注人物的情绪、兴趣、亲疏、日常相处和表达节奏；遇到有实际选择的问题才考虑取舍和方法。不能把人物背景当作真实工具能力。原作中对指挥官说的台词不自动决定同伴对话的目标。',
             'understand':'理解当前可见事件。区分发生的事实、角色猜测和未知；有真实歧义时写出一种有依据的其他解释和相关价值冲突，普通问候留空。依据人物 attentionPriorities 和 ambiguityStyle 选择关注点，不机械复述背景。消息的发言者只由 speakerId 判定；记忆中 ownSpeech 为 false 表示听到别人说话，不是本人自述，话语也不证明其内容已经发生。commander 是用户，用户称呼了某角色不等于用户就是该角色，也不改变当前 actorId。情绪须有对象与原因。不输出长篇内心独白。',
-            'decide':'根据认知快照选择一个允许的行动。依据人物 values、valueTradeoffs、methods 和 methodFallbacks 比较相关选项；只有确有取舍时用 tradeoff 简短说明理由及放弃的办法。保留人物分歧与方法差异，承诺后的工作必须可靠。只有相关来源才能支持目标。不要代替他人同意，不创造工具能力。goal 只在需要新长期目标时提出，否则为 null。goalUpdate 仅在已有目标的 evidence 支持下一步或状态改变时提出；使用该目标已有 evidence 中的编号，不能把模拟活动当现实能力认证。',
+            'decide':'根据此刻发生的事，结合人物的感受、兴趣和与对方的关系选择一个允许的行动。普通聊天可以只回应、开玩笑或沉默，无需寻找任务、监督进度或索要指令。存在实际取舍时才参考方法并说明 tradeoff。只有相关来源才能支持目标，不代替他人同意，不创造工具能力。goal 只在需要新长期目标时提出，否则为 null。goalUpdate 仅在已有目标的 evidence 支持状态改变时提出；模拟活动不构成现实能力认证。',
             'reflect':'从给定经历提炼有限信念、关系或习惯候选。说过不等于发生过；一次事件不形成永久人格。来源与反证均必须存在。不得重写核心身份、价值或授予技能。commitments 只逐字引用当前角色自己说过的明确承诺，并给出对应经历 sourceId；不能把别人的话或背景设定当成自己的承诺。',
-            'express':'按给定人物意图生成自然的远程文字消息。只输出 JSON：segments 为1至3段文字，sourceIds 原样复制指定来源。最多一张已知表情且独立成段。不泄露未分享的私事，不复述心理字段。只陈述允许公开的事实，不声称真实工具成功。',
+            'express':'按给定人物意图生成自然的远程文字消息。只输出 JSON：segments 为1至3段文字，普通短答默认一段，只有连续独立发言才拆分；sourceIds 原样复制指定来源。最多一张已知表情且独立成段。不泄露未分享的私事，不复述心理字段。只陈述允许公开的事实，不声称真实工具成功。',
         }
         instruction = rules.get(kind,'仅依据给定资料，返回结构化结果。')
         if kind=='decide' and payload.get('mode')=='social':
@@ -169,6 +169,9 @@ class MindRuntime:
             instruction += '\n只返回符合此 JSON schema 的对象：'+json.dumps(schema.model_json_schema(),ensure_ascii=False)
         messages = messages or [{'role':'system','content':instruction},
                     {'role':'user','content':json.dumps(payload,ensure_ascii=False)}]
+        if kind in {'express','moments_post','moments_comment'}:
+            from backend.platform.local_clock import with_time_context
+            messages=with_time_context(messages)
         started = time.monotonic()
         status = 'failed'
         task = None
@@ -213,21 +216,23 @@ class MindRuntime:
                             '未返回结构化正文' in str(task.exception()))}
 
     def profile(self, actor_id):
-        from backend.characters.terminal_characters import inspect
+        from backend.characters.terminal_characters import background
+        from backend.characters.dialogue_persona import PROFILE_POLICY, imported_background
         from backend.characters.character_behavior import behavior_context
-        card = inspect(actor_id)
         with session_scope() as s:
             actor = s.get(Actor,actor_id)
             if not actor or actor.kind!='agent':
                 raise ValueError('人物不存在。')
-            anchor = card['text']
+            anchor = background(actor_id)[0]
             sources = {'profile:'+actor_id:anchor,
+                'dialogue-policy':PROFILE_POLICY,
                 'author:'+actor_id:behavior_context(actor.source_character or actor.name)}
             from backend.characters.character_identity import source_names
             allowed_names=set(source_names(actor.source_character or actor.name))
             for item in (actor.extra_json or {}).get('sourceMaterials',[]):
                 if item.get('name') in allowed_names:
-                    sources['edition:'+item['name']]=json.dumps(item,ensure_ascii=False)
+                    sources['edition:'+item['name']]=json.dumps({**item,
+                        'text':imported_background(item['text'],item['name'])},ensure_ascii=False)
             for i,item in enumerate((actor.extra_json or {}).get('originalMindNotes',[])):
                 sources['background:'+str(i)] = item.get('text','')
             digest = key(json.dumps(sources,sort_keys=True,ensure_ascii=False))
@@ -315,13 +320,16 @@ class MindRuntime:
         return not self.background_blocked() and state['callsLastHour']<state['settings']['hourlyCalls']
 
     def snapshot(self, actor_id, prompt, source, conversation_id='', public=False, task_run_id='', include_task_memory=True,
-                 related_run_id=''):
+                 related_run_id='', mode='context'):
         self.mind.pump()
         profile=self.profile(actor_id)
         state=self.mind.inspect(actor_id)
         goals=[g for g in self.goals(actor_id) if g['status']=='active']
         import re
-        terms=set(re.findall(r'[\u4e00-\u9fff]|\w+',prompt.lower()))
+        from backend.chat.conversation_scope import current_dialogue_text, relevance_terms, is_greeting
+        query=current_dialogue_text(prompt)
+        dialogue=mode in {'chat','social','moments','life-share'}
+        terms=relevance_terms(query) if dialogue else set(re.findall(r'[\u4e00-\u9fff]|\w+',prompt.lower()))
         grouped={k:[] for k in ('episodic','semantic','procedural','prospective','working')}
         with session_scope() as s:
             recent=s.scalars(select(Experience).where(Experience.actor_id==actor_id,Experience.forgotten.is_(False))
@@ -362,6 +370,21 @@ class MindRuntime:
             from backend.chat.conversation_scope import task_experience
             modes={}
             rows=[r for r in rows if not task_experience(r,self.mind.store,modes)]
+        if dialogue:
+            greeting=is_greeting(query)
+            def relevant(row):
+                if row['data'].get('userCorrection'):return True
+                if related_run_id and row['runId']==related_run_id and row['kind']=='outcome':return True
+                if greeting:
+                    return row['runId']==source.split(':',1)[0] or row['text']==query
+                return (any(term in row['text'].lower() for term in terms)
+                    or time.time()-row['at']<=1800)
+            rows=[row for row in rows if relevant(row)]
+            # A remembered intention is not a standing instruction for every chat.
+            recalled_ids={value for row in rows for value in (row['id'],row['data'].get('eventId')) if value}
+            goals=[g for g in goals if not greeting and (any(term in
+                (g['title']+' '+g.get('nextStep','')).lower() for term in terms)
+                or bool(set(g.get('evidence',[])) & recalled_ids))]
         goal_text=' '.join(g['title']+' '+g.get('nextStep','') for g in goals)
         rows.sort(key=lambda r:(bool(related_run_id and r['runId']==related_run_id and r['kind']=='outcome'),
             bool(r['data'].get('userCorrection')),
@@ -400,6 +423,8 @@ class MindRuntime:
             for field in ('attentionPriorities','ambiguityStyle','valueTradeoffs','methodFallbacks'):
                 profile_summary.pop(field,None)
         emotion=state['data'].get('emotion')
+        if dialogue and emotion and (is_greeting(query) or time.time()-emotion.get('at',0)>1800):
+            emotion=None
         if emotion and include_task_memory is not True:
             event_source=str(emotion.get('eventId','')).split(':',1)[0]
             if event_source.startswith('run-'):
@@ -407,6 +432,8 @@ class MindRuntime:
                     if self.mind.store.get(event_source).get('mode')!='chat':emotion=None
                 except KeyError:pass
         from backend.platform.local_clock import snapshot as current_time
+        mood=state['data'].get('mindMood') or {}
+        if dialogue and (is_greeting(query) or time.time()-mood.get('at',0)>1800):mood={}
         return {'actorId':actor_id,'version':state['version'],'profileVersion':profile['version'],'time':current_time(),
             'channelContext':{'medium':'remote_text','coLocated':False,'physicalLocation':'unknown',
                 'memberPresence':'unknown'},
@@ -414,7 +441,7 @@ class MindRuntime:
             'memory':grouped,'goals':goals if not public else [],
             'relationships':relationships,
             'emotion':emotion if not public or set((emotion or {}).get('sourceIds',[]))<=allowed else None,
-            'mood':{k:v for k,v in (state['data'].get('mindMood') or {}).items() if k in {'text','intensity'}},
+            'mood':{k:v for k,v in mood.items() if k in {'text','intensity'}},
             'current':{'id':source,'text':prompt},'allowedSources':sorted(allowed),
             'conversationId':conversation_id,'sessionKey':key(actor_id,conversation_id or 'private-mind')}
 
@@ -442,7 +469,7 @@ class MindRuntime:
             snap=self.snapshot(actor_id,prompt,source,conversation_id,public,
                 task_run_id=task_run_id or (source.split(':',1)[0] if mode=='task' else ''),
                 include_task_memory=include_task_memory if include_task_memory is not None else mode not in {'chat','social'},
-                related_run_id=related_run_id)
+                related_run_id=related_run_id,mode=mode)
             with session_scope() as s:
                 previous=s.get(MindDecision,did)
                 if (previous and previous.status=='committed' and previous.data.get('profileVersion')==snap['profileVersion']

@@ -729,6 +729,7 @@ onUnmounted(() => {
         :run="selectedRun"
         :runs="runs"
         :agents="agents"
+        :connected-agent-ids="workspace?.settings.connectedAgentIds || []"
         @close="showWork = false"
         @select="selectedRunId = $event"
         @changed="refresh"

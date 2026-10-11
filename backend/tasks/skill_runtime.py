@@ -129,18 +129,17 @@ PUBLIC_SKILLS: tuple[SkillTemplate, ...] = (
         prompt_patch="涉及本地工具时，先输出计划而不是直接执行，并明确风险、影响范围、回滚方式和审批需要。",
         tool_allowlist=(
             "list_dir",
-            "read_text_file",
-            "search_text",
-            "read_word_document",
-            "read_excel_document",
-            "write_text_file",
-            "create_folder",
-            "move_file",
-            "copy_file",
-            "create_snapshot",
-            "restore_snapshot",
-            "write_word_document",
-            "write_excel_document",
+            "read_file",
+            "search",
+            "read_document",
+            "write_file",
+            "patch_file",
+            "mkdir",
+            "move",
+            "copy",
+            "restore",
+            "undo",
+            "write_document",
         ),
         tags=("工具", "安全", "工作区"),
     ),
@@ -166,13 +165,13 @@ class SkillRegistry:
             return any(token in capability_tokens or token in text for token in tokens)
 
         if has_any("执行", "整理", "归档", "处理", "工程", "实现", "制作"):
-            tools.extend(["create_folder", "copy_file"])
+            tools.extend(["mkdir", "copy"])
         if has_any("协调", "秘书", "统筹", "规划", "审查", "质检", "风控"):
-            tools.extend(["create_snapshot", "restore_snapshot"])
+            tools.extend(["restore", "undo"])
         if has_any("执行", "整理", "归档", "协调", "流程", "搬运"):
-            tools.append("move_file")
+            tools.append("move")
         if has_any("文书", "记录", "写作", "总结", "规划", "报告"):
-            tools.append("write_text_file")
+            tools.append("write_file")
 
         return list(dict.fromkeys(tools))
 

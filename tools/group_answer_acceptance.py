@@ -27,7 +27,7 @@ def main():
     os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///'+(home/'app.db').as_posix(),
         AZURJUUS_WORKSPACE_STATE_PATH=str(home/'state/workspace.json'), AZURJUUS_WORKSPACE_ROOT=str(work),
         AZURJUUS_DESKTOP_LOG_DIR=str(home/'logs'), AZURJUUS_SOCIAL_ENABLED='0', AZURJUUS_REFLECTION_ENABLED='0',
-        AZURJUUS_SKILL_TRIALS_ENABLED='0', AZURJUUS_EXPRESSION_ENABLED='1', AZURJUUS_EXECUTION_BACKEND='hermes')
+        AZURJUUS_SKILL_TRIALS_ENABLED='0', AZURJUUS_EXPRESSION_ENABLED='1', AZURJUUS_EXECUTION_BACKEND='deepseek-harness')
     report={'model':model,'scope':'Synthetic text files, not PDF parsing or real user books.'}
     if os.name == 'nt':
         proc = subprocess.run([str(ROOT/'.venv/Scripts/pythonw.exe'),'-X','utf8',str(ROOT/'tools/desktop_entry.py'),'--check'],

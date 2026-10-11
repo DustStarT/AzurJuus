@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 import sys
 import time
+import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-STATE=ROOT/'.azurjuus'/'qt-acceptance'
+STATE=Path(tempfile.mkdtemp(prefix='azur-qt-'))
 STATE.mkdir(parents=True,exist_ok=True)
 os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///'+(STATE/'qt.db').as_posix(),AZURJUUS_WORKSPACE_STATE_PATH=str(STATE/'workspace.json'),AZURJUUS_REDIS_URL='',AZURJUUS_CHROMA_URL='',AZURJUUS_SOCIAL_ENABLED='0')
 import desktop

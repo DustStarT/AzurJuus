@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Record(BaseModel):
-    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True, allow_inf_nan=False)
 
 
 class Emotion(Record):
@@ -44,7 +44,7 @@ class GoalUpdate(Record):
 
 
 class DecisionIntent(Record):
-    action: Literal['speak','wait','end','execute','read','practice','rest','reflect','invite','stroll','meal','hobby','create_group','accept','decline','continue','finish','pause','contact']
+    action: Literal['speak','publish','wait','end','execute','read','practice','rest','reflect','invite','stroll','meal','hobby','create_group','accept','decline','continue','finish','pause','contact']
     purpose: str = Field(min_length=1, max_length=400)
     method: str = Field(default='', max_length=600)
     tradeoff: str = Field(default='', max_length=300)

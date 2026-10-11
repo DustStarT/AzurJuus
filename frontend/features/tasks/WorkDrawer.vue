@@ -1,23 +1,33 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch, inject } from "vue";
 import { api } from "../../shared/api";
-import type { Run, ToolCall, Agent, RunEvent } from "../../shared/types";
+import { kernelRuntimeKey } from "../../shared/kernel-runtime";
+import type { WorkflowDetail } from "../../shared/kernel-runtime";
+import type { Run, ToolCall, Agent, RunEvent, HelpRequest } from "../../shared/types";
 import Icon from "../../shared/Icon.vue";
 import Avatar from "../../shared/Avatar.vue";
-const props = defineProps<{ run?: Run; runs: Run[]; agents: Agent[] }>();
+const props = defineProps<{ run?: Run; runs: Run[]; agents: Agent[]; connectedAgentIds: string[] }>();
 const emit = defineEmits<{ close: []; select: [id: string]; changed: [] }>();
-const calls = ref<ToolCall[]>([]),
-  error = ref(""),
+const kernel = inject(kernelRuntimeKey);
+if (!kernel) throw new Error("Task drawer requires the workspace plugin runtime");
+const projected = computed(() => props.run ? kernel.state.value[props.run.id] : undefined);
+const calls = computed(() => Object.values(projected.value?.calls ?? {}));
+const error = ref(""),
   steer = ref(""),
   acknowledge = ref(false),
   tab = ref("progress"),
-  busy = ref(false);
-const outputs = ref<Record<string, string>>({});
+  busy = ref(false),
+  helperAssignmentId = ref(""),
+  helperActorId = ref(""),
+  helperBrief = ref(""),
+  helperReason = ref("");
+const outputs = computed(() => projected.value?.outputs ?? {});
 const transcripts = ref<{seq:number;actorId:string;text:string}[]>([]);
 const statuses: Record<string, string> = {
   queued: "排队中",
   running: "正在执行",
   waiting_approval: "等待确认",
+  waiting_secretary: "秘书复核中",
   paused: "已暂停",
   failed: "执行失败",
   completed: "已完成",
@@ -31,18 +41,49 @@ const statuses: Record<string, string> = {
   reconciled: "已核验",
 };
 const approvals = computed(() =>
-  calls.value.filter((c) => c.status === "waiting_approval"),
+  calls.value.filter((c) => ['waiting_secretary','waiting_approval'].includes(c.status)),
 );
 const currentRuns = computed(() => props.runs.filter((r) => r.mode !== 'chat'));
+const helpRequests = computed(() => props.run?.helpRequests || []);
+const stageReviews = computed(() => {
+  const latest=new Map<string,NonNullable<Run['stageReviews']>[string]>();
+  Object.values(props.run?.stageReviews || {}).forEach(r => latest.set(r.key,r));
+  return [...latest.values()].filter(r => ['secretary_reviewing','waiting_user','rejected','interrupted','stale'].includes(r.status));
+});
+const reviewNotes = ref<Record<string,string>>({});
+async function decideStage(id: string, decision: string) {
+  if (!props.run || busy.value) return;
+  busy.value = true; error.value = '';
+  try {
+    await api(`/api/runs/${props.run.id}/reviews/${id}`, { decision, note: reviewNotes.value[id] || '' });
+    delete reviewNotes.value[id]; await load(); emit('changed');
+  } catch (e) { error.value = (e as Error).message; }
+  finally { busy.value = false; }
+}
+const helperAssignments = computed(() => (props.run?.assignments || []).filter((item) => !['completed', 'submitted'].includes(item.status)));
+const helperCandidates = computed(() => {
+  const assigned = new Set((props.run?.assignments || []).map((item) => item.actorId));
+  if (props.run?.actorId) assigned.add(props.run.actorId);
+  const connected = new Set(props.connectedAgentIds);
+  return props.agents.filter((agent) => connected.has(agent.id) && !assigned.has(agent.id));
+});
 let timer = 0;
+let loadGeneration = 0;
 async function load() {
-  if (props.run) {
+  const runId = props.run?.id;
+  const generation = ++loadGeneration;
+  if (runId) {
     try {
-      calls.value = (
-        await api<{ calls: ToolCall[] }>(`/api/runs/${props.run.id}`)
-      ).calls;
-      transcripts.value = (await api<{records:typeof transcripts.value}>(`/api/runs/${props.run.id}/transcripts`)).records;
+      const [detail, transcript] = await Promise.all([
+        api<WorkflowDetail>(`/api/runs/${runId}`),
+        api<{records:typeof transcripts.value}>(`/api/runs/${runId}/transcripts`),
+      ]);
+      if (generation !== loadGeneration || props.run?.id !== runId) return;
+      kernel!.hydrateDetail(detail);
+      transcripts.value = transcript.records;
+      error.value = "";
     } catch (e) {
+      if (generation !== loadGeneration) return;
       error.value = (e as Error).message;
     }
   }
@@ -50,13 +91,8 @@ async function load() {
 function event(e: Event) {
   const detail = (e as CustomEvent<RunEvent>).detail;
   if (detail?.runId !== props.run?.id) return;
-  if (detail.type === "tool.output") {
-    const id = String(detail.payload.callId);
-    outputs.value[id] = (
-      (outputs.value[id] || "") + String(detail.payload.text || "")
-    ).slice(-24000);
-    return;
-  }
+  // Calls, approval status and output are already projected by the plugin.
+  if (!detail.type.startsWith("execution.message.") && !["run.updated", "run.created"].includes(detail.type)) return;
   if (!timer)
     timer = window.setTimeout(() => {
       timer = 0;
@@ -66,9 +102,15 @@ function event(e: Event) {
 watch(
   () => props.run?.id,
   () => {
-    calls.value = [];
-    outputs.value = {};
+    clearTimeout(timer);
+    timer = 0;
+    transcripts.value = [];
+    error.value = "";
     acknowledge.value = false;
+    helperAssignmentId.value = "";
+    helperActorId.value = "";
+    helperBrief.value = "";
+    helperReason.value = "";
     void load();
   },
 );
@@ -77,6 +119,7 @@ onMounted(() => {
   window.addEventListener("azur-run-event", event);
 });
 onUnmounted(() => {
+  ++loadGeneration;
   clearTimeout(timer);
   window.removeEventListener("azur-run-event", event);
 });
@@ -100,13 +143,53 @@ async function control(action: string) {
   }
 }
 async function resolve(call: ToolCall, decision: string) {
+  const runId = props.run?.id;
+  if (!runId || busy.value) return;
+  busy.value = true;
   try {
-    await api(`/api/runs/${props.run?.id}/approvals/${call.id}`, { decision });
-    await load();
+    const detail = await api<WorkflowDetail>(`/api/runs/${runId}/approvals/${call.id}`, { decision });
+    kernel!.hydrateDetail(detail);
     emit("changed");
   } catch (e) {
     error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
   }
+}
+async function requestHelp() {
+  if (!props.run || !helperAssignmentId.value || !helperActorId.value || !helperBrief.value.trim() || busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    const assignment = props.run.assignments.find((item) => item.id === helperAssignmentId.value);
+    await api('/api/workflows/help-request', {
+      runId: props.run.id,
+      assignmentId: helperAssignmentId.value,
+      requesterId: assignment?.actorId || props.run.actorId,
+      brief: helperBrief.value.trim(),
+      reason: helperReason.value.trim(),
+      candidateIds: [helperActorId.value],
+    });
+    helperBrief.value = "";
+    helperReason.value = "";
+    await load();
+    emit('changed');
+  } catch (e) { error.value = (e as Error).message; }
+  finally { busy.value = false; }
+}
+async function resolveHelp(request: HelpRequest, decision: string) {
+  if (!props.run || busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await api(`/api/workflows/help-request/${props.run.id}/${request.id}`, {
+      decision,
+      actorId: decision === 'approved' ? (request.candidateIds[0] || helperActorId.value) : undefined,
+    });
+    await load();
+    emit('changed');
+  } catch (e) { error.value = (e as Error).message; }
+  finally { busy.value = false; }
 }
 const pretty = (v: unknown) => JSON.stringify(v, null, 2);
 async function removeRecords(all = false) {
@@ -224,26 +307,45 @@ async function removeRecords(all = false) {
         </nav>
         <div class="drawer-content">
           <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+          <section v-if="stageReviews.length" class="approval-section">
+            <h3><Icon name="shield" />阶段验收</h3>
+            <article v-for="review in stageReviews" :key="review.id" class="approval-card">
+              <strong>{{ review.title }}</strong>
+              <p>{{ review.status === 'secretary_reviewing' ? '秘书正在复核' : review.status === 'waiting_user' ? '秘书已通过，等待你的验收' : '审核未完成，请修订或继续任务' }}</p>
+              <p v-if="review.secretary">{{ agents.find(a => a.id === review.secretary?.actorId)?.name || '秘书' }}：{{ review.secretary.reason }}</p>
+              <p v-if="review.material.result">{{ review.material.result.summary }}</p>
+              <ul v-if="review.material.assignments"><li v-for="item in review.material.assignments" :key="item.id">{{ agents.find(a => a.id === item.actorId)?.name }}：{{ item.brief }}</li></ul>
+              <p v-for="(artifact,index) in review.material.artifacts || []" :key="artifact.path"><a :href="`/api/runs/${run.id}/reviews/${review.id}/artifacts/${index}`" download>{{ artifact.path }}</a> · {{ artifact.bytes }} 字节</p>
+              <label v-if="review.status === 'waiting_user'">验收意见<textarea v-model="reviewNotes[review.id]" maxlength="2000" placeholder="需要修改的地方或补充要求"></textarea></label>
+              <div v-if="review.status === 'waiting_user'" class="button-row">
+                <button class="soft-button" :disabled="busy" @click="decideStage(review.id,'rejected')">要求修订</button>
+                <button class="primary-button" :disabled="busy" @click="decideStage(review.id,'approved')">验收通过，继续</button>
+              </div>
+            </article>
+          </section>
           <section v-if="approvals.length" class="approval-section">
-            <h3><Icon name="shield" />需要你的确认</h3>
+            <h3><Icon name="shield" />操作复核与确认</h3>
             <article
               v-for="call in approvals"
               :key="call.id"
               class="approval-card"
             >
               <strong>{{ call.name }}</strong>
+              <p v-if="call.status === 'waiting_secretary'">秘书正在核验必要性与副作用，尚无执行权限。</p>
               <p>{{ call.result?.reason }}</p>
+              <p v-if="call.result?.secretaryReview">秘书复核：{{ (call.result.secretaryReview as { reason?: string }).reason }}</p>
               <pre>{{ pretty(call.args) }}</pre>
               <pre
                 v-if="outputs[call.id] && call.status === 'running'"
                 aria-live="off"
                 >{{ outputs[call.id] }}</pre
               >
-              <div class="button-row">
-                <button class="soft-button" @click="resolve(call, 'rejected')">
+              <div v-if="call.status === 'waiting_approval'" class="button-row">
+                <button class="soft-button" :disabled="busy" @click="resolve(call, 'rejected')">
                   拒绝</button
                 ><button
                   class="primary-button"
+                  :disabled="busy"
                   @click="resolve(call, 'approved')"
                 >
                   <Icon name="check" />批准操作
@@ -293,6 +395,36 @@ async function removeRecords(all = false) {
                 <p>{{ assignment.result.summary }}</p>
               </details>
             </article>
+            <section v-if="run.status !== 'completed' && helperAssignments.length" class="help-panel">
+              <div class="section-heading">
+                <span><Icon name="users" /> 外援协作</span>
+                <small>计划修订 {{ run.planRevision || 0 }}</small>
+              </div>
+              <form class="help-form" @submit.prevent="requestHelp">
+                <select v-model="helperAssignmentId" aria-label="选择需要外援的子任务">
+                  <option value="">选择需要外援的子任务</option>
+                  <option v-for="assignment in helperAssignments" :key="assignment.id" :value="assignment.id">
+                    {{ assignment.brief.slice(0, 42) }}
+                  </option>
+                </select>
+                <select v-model="helperActorId" aria-label="选择外援候选人">
+                  <option value="">选择外援候选人</option>
+                  <option v-for="agent in helperCandidates" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+                </select>
+                <input v-model="helperBrief" required placeholder="说明需要补位的工作" aria-label="外援工作说明" />
+                <input v-model="helperReason" placeholder="原因（可选）" aria-label="申请外援原因" />
+                <button class="soft-button" :disabled="busy || !helperAssignmentId || !helperActorId || !helperBrief.trim()">申请外援</button>
+              </form>
+              <article v-for="request in helpRequests" :key="request.id" class="help-request" :class="`help-request--${request.status}`">
+                <div><strong>{{ request.brief }}</strong><small>{{ request.status }}</small></div>
+                <p v-if="request.reason">{{ request.reason }}</p>
+                <p v-if="request.handoff?.length" class="quiet-note">已携带 {{ request.handoff.length }} 个依赖产物</p>
+                <div v-if="request.status === 'pending'" class="button-row">
+                  <button class="text-button danger" :disabled="busy" @click="resolveHelp(request, 'rejected')">拒绝</button>
+                  <button class="primary-button" :disabled="busy || !request.candidateIds.length" @click="resolveHelp(request, 'approved')">批准并加入计划</button>
+                </div>
+              </article>
+            </section>
             <div v-if="run.result" class="result-summary">
               <Icon name="check" />
               <p>{{ run.result.summary }}</p>

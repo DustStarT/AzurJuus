@@ -4,6 +4,7 @@
 @import "./features/tasks/tasks.css";
 @import "./features/settings/settings.css";
 @import "./styles/responsive.css";
+@import "./styles/blue-glass.css";
 
 /* JUUS shared visual tokens. Feature files own layout, never local themes. */
 :root {

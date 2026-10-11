@@ -3,6 +3,7 @@ import asyncio
 import json
 from pathlib import Path
 import sys
+import tempfile
 from uuid import uuid4
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -13,12 +14,13 @@ from backend.tasks.capabilities import LocalCapabilities
 async def main():
     out=ROOT/'validation'/'desktop'
     out.mkdir(parents=True,exist_ok=True)
-    work=out/('ExplorerAcceptance-'+uuid4().hex[:8])
+    home=Path(tempfile.mkdtemp(prefix='azur-desktop-'))
+    work=home/('ExplorerAcceptance-'+uuid4().hex[:8])
     work.mkdir()
     (work/'documents').mkdir()
     (work/'archive').mkdir()
     (work/'documents'/'fixture.txt').write_text('Synthetic Explorer fixture',encoding='utf-8')
-    tools=LocalCapabilities(ROOT/'.azurjuus'/'desktop-acceptance')
+    tools=LocalCapabilities(home/'state')
     run={'id':work.name,'workspace':str(work)}
     async def execute(args):
         return await tools.execute(run,'desktop',args,'desktop-test',lambda *a:None)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import codecs
 import hashlib
 import json
 import os
@@ -13,6 +14,9 @@ from uuid import uuid4
 
 
 CATALOG = {
+    'method_search': 'Search your visible, enabled methods: query string, limit 1-20. Does not choose a method or grant tools.',
+    'method_select': 'Choose or combine 1-4 method ids returned by method_search: ids [strings]. Returns actual method instructions. Does not grant tools.',
+    'method_evolve': 'Propose an improved personal method from your verified task evidence: name, summary, patch, basedOn [method ids], sourceRunId, cases [3 distinct isolated acceptance scenarios]. Never enables the candidate; secretary and user must confirm the trial specification.',
     "discuss": "Ask or challenge an assigned teammate: actorId, text (1-2000 chars), optional kind (question/suggestion/objection/answer/resolved), threadId to continue a discussion. Maximum two exchanges per thread, 8 per task. Replies appear in group chat and tool results. To mark resolved supply threadId and explanation. Discussion is not execution evidence.",
     "list_dir": "List path (default .).",
     "read_file": "Read UTF-8 text by path, offset (line, default 0), column (default 0), limit (lines, default 200), maxChars (default 20000). Continue at nextOffset/nextColumn.",
@@ -32,6 +36,8 @@ CATALOG = {
     "desktop": "Windows op: windows, inspect(handle), focus(handle), select(handle,index), open(handle,index), invoke(handle,index), type(handle,index,text), shortcut(handle,action: copy/cut/paste/undo/rename/select_all/up), explorer(path), screenshot, click(x,y). Element indices and shortcuts require a recent inspect. UI actions require approval.",
     "deliver": "Submit result: summary, artifacts [paths], checks [{callId,description}], unresolved [strings], optional notes [strings]. Read back created files. Read-only answers/listings may use artifacts=[] and successful list_dir/read calls as checks. unresolved ONLY means unmet explicit user requirements; optional further analysis and scope limitations go in notes/summary. Resolve prior failed/rejected operations using resolvedErrors [{callId,resolution,checkCallId}] with later verification, or list genuine unresolved issues.",
     "delegate": "Propose host-scheduled assignments: tasks [{id,actorId,brief,dependsOn:[id],acceptance:[strings]}]. Only secretary planner may use this.",
+    "request_help": "Request an external helper for your current assignment: brief, reason, optional candidateIds from connected members. The user must approve membership; this request alone does not authorize a new member or prove execution. Helper results arrive with subsequent tool results and final review.",
+    "replan": "Secretary-only revision of tasks [{id,actorId,brief,dependsOn:[id],acceptance:[strings]}]. Preserve running/completed tasks and evidence; use only admitted members. New pending tasks are scheduled by the host.",
     "execution_history": "Read this task's durable tool journal. Supply callId for one call, or offset/limit for call metadata. Full call JSON is paginated by charOffset/maxChars; nextCharOffset locates the remainder.",
 }
 MUTATING = {"write_file", "patch_file", "mkdir", "copy", "move", "restore", "undo", "write_document"}
@@ -41,9 +47,9 @@ def phase_actions(phase):
     if phase == "chat" or phase.startswith("discussion_"):
         return []
     if phase == "planner":
-        return ["delegate", "execution_history"]
+        return ["delegate", "execution_history", "method_search", "method_select"]
     if phase == "reviewer":
-        return ["read_file", "read_document", "read_image", "search", "list_dir", "deliver", "execution_history"]
+        return ["read_file", "read_document", "read_image", "search", "list_dir", "deliver", "execution_history", "method_search", "method_select"]
     return [name for name in CATALOG if name != "delegate"]
 
 
@@ -93,6 +99,8 @@ class LocalCapabilities:
                 raise
 
     def path(self, root: str, value=".") -> Path:
+        if not isinstance(value, (str, Path)):
+            raise CapabilityError('路径必须是文字。')
         base = Path(root).resolve(strict=True)
         candidate = (base / str(value)).resolve()
         if not candidate.is_relative_to(base):
@@ -107,17 +115,38 @@ class LocalCapabilities:
             dest=self.path(root,str(dest/self.path(root,args['src']).name))
         return dest
 
+    @staticmethod
+    def validate_arguments(args):
+        if not isinstance(args, dict):
+            raise CapabilityError('工具参数必须是对象。')
+        for field in ('path', 'src', 'dest', 'pattern', 'content', 'old', 'new', 'snapshotId',
+                      'url', 'selector', 'value', 'op', 'action', 'text', 'cwd'):
+            if field in args and not isinstance(args[field], str):
+                raise CapabilityError('工具文字参数类型无效：' + field)
+        for field in ('offset', 'column', 'limit', 'maxChars', 'index', 'handle'):
+            if field in args and (not isinstance(args[field], int) or isinstance(args[field], bool)):
+                raise CapabilityError('工具整数参数类型无效：' + field)
+        if 'timeout' in args:
+            import math
+            value = args['timeout']
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or isinstance(value, float) and not math.isfinite(value)):
+                raise CapabilityError('工具超时必须是有限数字。')
+        if 'argv' in args and (not isinstance(args['argv'], list) or not args['argv']
+                or any(not isinstance(item, str) or '\0' in item for item in args['argv'])):
+            raise CapabilityError('argv 必须为非空字符串数组。')
+
     def approval_reason(self, run, name, args):
+        self.validate_arguments(args)
+        if run.get('reviewPolicy',True) and name in {'write_file','patch_file','write_document'}:
+            if self.path(run['workspace'],args.get('path','.')).exists():
+                return '此操作会修改现有文件，须先经秘书复核和用户确认。'
         if name in {"restore", "undo"}:
             return "恢复快照将覆盖当前文件"
         if name in {"copy", "move"} and self.file_destination(run["workspace"],args).exists():
             return "目标文件已存在，操作将覆盖内容"
-        if name == "command" and "command" not in run.get("grants", []):
-            return "允许此任务执行本地程序；程序具有当前用户权限，目录限制不构成进程沙箱"
         if name == "command":
-            cmd = " ".join(args.get("argv", [])).lower()
-            if any(s in cmd for s in ("remove-item", "rmdir", "rm ", "del ", "format", "shutdown", "reg.exe", "curl ", "invoke-webrequest", "push", "upload")):
-                return "命令可能删除数据、更改系统或向外部提交"
+            return "执行本地程序具有当前用户权限，目录限制不构成进程沙箱；仅批准本次命令。"
         if name == "browser" and args.get("op") in {"click", "submit", "download"}:
             return "网页点击或提交可能向外部发送数据，请确认目标与内容"
         if name == "desktop" and args.get("op") in {"invoke", "type", "click", "select", "open", "shortcut"}:
@@ -135,6 +164,7 @@ class LocalCapabilities:
         return sid
 
     async def execute(self, run, name, args, call_id, emit):
+        self.validate_arguments(args)
         if name not in CATALOG:
             raise CapabilityError("未知工具。")
         if name == "command":
@@ -156,6 +186,7 @@ class LocalCapabilities:
         return await self.threaded(self.file_tool, run, name, args)
 
     def file_tool(self, run, name, args):
+        self.validate_arguments(args)
         root = run["workspace"]
         path = self.path(root, args.get("path", "."))
         offset = max(0, int(args.get("offset", 0)))
@@ -294,9 +325,8 @@ class LocalCapabilities:
             suffix = path.suffix.lower()
             items = []
             if suffix == ".pdf":
-                from pypdf import PdfReader
-                reader = PdfReader(path)
-                items = [{"page": i + 1, "text": p.extract_text() or "", "needsOCR": not bool(p.extract_text())} for i, p in enumerate(reader.pages)]
+                from backend.tasks.pdf_ocr import read_pdf
+                return read_pdf(path,offset,limit)
             elif suffix == ".docx":
                 from docx import Document
                 doc = Document(path)
@@ -337,6 +367,7 @@ class LocalCapabilities:
         raise CapabilityError("该工具由任务调度器处理。")
 
     async def command(self, run, args, call_id, emit):
+        self.validate_arguments(args)
         argv = args.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(v, str) and "\0" not in v for v in argv):
             raise CapabilityError("argv 必须为非空字符串数组。")
@@ -345,24 +376,28 @@ class LocalCapabilities:
         process = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, creationflags=0x08000000 if os.name == "nt" else 0)
         self.processes[call_id] = process
         output = []
-        log_dir = self.data_root / "command-logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         try:
+            log_dir = self.data_root / "command-logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
             async with asyncio.timeout(max(1, min(1800, int(args.get("timeout", 120))))):
                 with (log_dir / (call_id + ".log")).open("wb") as log:
                     while chunk := await process.stdout.read(4096):
                         log.write(chunk)
-                        text = chunk.decode("utf-8", errors="replace")
+                        text = decoder.decode(chunk)
                         output.append(text)
                         if sum(map(len, output)) > 32000:
                             output = output[-4:]
                         emit("tool.output", {"callId": call_id, "text": text})
                     await process.wait()
+                    if tail := decoder.decode(b'', final=True):
+                        output.append(tail)
+                        emit('tool.output', {'callId': call_id, 'text': tail})
             return {"exitCode": process.returncode, "output": "".join(output), "logId": call_id, "success": process.returncode == 0}
         except TimeoutError as exc:
             await self.kill(process)
             raise TimeoutError("命令执行超时，进程已停止。") from exc
-        except asyncio.CancelledError:
+        except BaseException:
             await self.kill(process)
             raise
         finally:

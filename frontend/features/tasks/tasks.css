@@ -191,6 +191,41 @@
 .assignment details p {
   white-space: pre-wrap;
 }
+.help-panel {
+  margin: 18px 0 4px;
+  padding: 14px;
+  border: 1px solid #d8e4eb;
+  border-radius: var(--radius-card);
+  background: #f8fbfc;
+}
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #537083;
+  font-size: 12px;
+  font-weight: 650;
+}
+.section-heading span { display: flex; gap: 6px; align-items: center; }
+.section-heading svg { width: 15px; }
+.section-heading small { color: #91a4b0; font-weight: 500; }
+.help-form { display: grid; gap: 7px; margin: 11px 0; }
+.help-form input, .help-form select {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid #d7e2e9;
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: white;
+  color: #587084;
+  font: inherit;
+  font-size: 11px;
+}
+.help-request { padding: 9px 0 0; border-top: 1px solid #e1e9ed; font-size: 11px; }
+.help-request > div:first-child { display: flex; justify-content: space-between; gap: 8px; }
+.help-request strong { color: #61798a; font-weight: 600; }
+.help-request small { color: #95a8b4; }
+.help-request p { margin: 5px 0 0; color: #8798a4; line-height: 1.5; }
 .tool-record {
   background: #fff9;
   border: 1px solid #e2e9f2;

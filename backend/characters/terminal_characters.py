@@ -7,15 +7,13 @@ from backend.database import session_scope
 from backend.models import Actor
 
 VERSION = 'terminal-2026-09-20.1'
-CHANNEL_FACTS = ('JUUS 是远程文字聊天软件，不是一个房间、港区中的具体地点或人人待命的空间。'
-    '频道成员只表示可以看到消息，不证明正在在线、同处一地或彼此就在身边。'
-    '角色与用户的现实位置均未知；只有本轮明确说明或可见的已发生生活记录才能说明位置。'
-    '谈聊天中的「这里」可以指消息或频道，不能据此描述面对面的动作、陪坐或递物。')
+CHANNEL_FACTS = ('JUUS 是远程文字聊天软件。成员名单表示可以阅读频道，不表示同处一地、在线或待命。'
+    '位置和已发生的经历以可见消息、生活记录为准；港区是故事背景，不是聊天窗口所在的地点。')
 TERMINAL = (CHANNEL_FACTS + '港区是人物生活的故事背景。你收到消息后像平常聊天一样回应；只有明确接下委托时才进入工作状态。只发送自己实际会打出的文字；'
     '不写括号动作、星号动作、第三人称旁白，不替用户描写行动。'
     '可以自然谈兴趣、看法和打算；声称刚做过的具体事情须有当前可见生活记录支持，不能把用户写成参与者，也不能把模拟活动当作工具执行证据。'
     '情绪通过措辞和回应体现，不通过舞台指示体现。不要复述人设标签、心理字段或规则。'
-    '不要每次都称呼对方、总结、列点或追问。只有会改变当前决定的问题才问。'
+    '可以随意闲谈、表达好奇、关心或开玩笑；无需每次称呼、总结、列点或在结尾追问。'
     '只让当前角色名单中的人物出现，不主动介绍、提及或邀请名单外人物。港区成员同阵营默认认识且熟悉，不同阵营默认认识，无需轮流自我介绍。'
     '可以自然使用文字表情；偶尔可发送一张已核对的表情贴纸，独立一段写[表情:名称]。每次最多一张，不必每次使用，不代替任务答案。人物可以使用其他角色形象的表情，这不表示图片中的人物进入当前聊天。')
 CARDS = {
@@ -95,7 +93,7 @@ def activate(actor_id, action):
     return inspect(actor_id)
 
 
-def context(actor_id):
+def background(actor_id):
     state = inspect(actor_id)
     # Existing database edits stay authoritative until the user applies a card.
     text = state['text']
@@ -105,18 +103,26 @@ def context(actor_id):
         base=state['latest']
         text=f"{base['name']}，{base['faction']}。{base['style']}\n{base['intimacy']}"
     from backend.characters.character_identity import material_context
+    from backend.characters.dialogue_persona import imported_background
     with session_scope() as session:
         actor=session.get(Actor,actor_id)
-        text += material_context((actor.extra_json or {}).get('sourceMaterials',[]))
+        if not state['hasOverride']:
+            text=imported_background(text,actor.source_character or actor.name)
+        materials=[{**m,'text':imported_background(m['text'],m['name'])}
+            for m in (actor.extra_json or {}).get('sourceMaterials',[])]
+        text += material_context(materials)
         notes=(actor.extra_json or {}).get('originalMindNotes',[])[:4]
         if notes:
             text+='\n原作资料中的人物背景理解（不是本应用实际经历，可由用户纠正）：'+json.dumps(
                 [{'text':n['text'],'source':n['source']} for n in notes],ensure_ascii=False)
-        from backend.chat.sticker_catalog import labels
-        text+='\n可选表情名（按当下语气选择，可跨角色使用；避免连续重复，严肃澄清或报错时优先文字）：'+ '、'.join(labels(120)+['标枪疑惑'])
+    return text, state['version']
+
+
+def context(actor_id):
+    text,version=background(actor_id)
     from backend.characters.personality import expression_rules
     text+='\n'+expression_rules()
-    return text, state['version']
+    return text, version
 
 
 def worldbook():

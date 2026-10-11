@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from backend.credentials import protect
 from backend.models import ModelConnection, WorkspaceSetting
+from backend.tasks.model_output import completion_message, text_content, function_calls
 
 
 def normalize(base_url: str, model: str) -> tuple[str, str]:
@@ -101,13 +102,14 @@ async def probe(base_url: str, model: str, api_key: str) -> dict:
         return {'available':False,'toolCalling':tool_status,'httpStatus':response.status_code,
             'latencyMs':elapsed,'message':check_message(response.status_code)}
     try:
-        message=response.json()['choices'][0]['message']
-        if not isinstance(message,dict) or not (message.get('content') or message.get('tool_calls')):
+        message=completion_message(response.json())
+        calls=function_calls(message.get('tool_calls'))
+        if not text_content(message.get('content')) and not calls:
             raise ValueError('empty choice')
-    except (ValueError,KeyError,IndexError,TypeError):
+    except (ValueError,KeyError,IndexError,TypeError,RuntimeError):
         return {'available':False,'toolCalling':tool_status,'latencyMs':elapsed,
             'message':'接口返回成功，但没有可识别的回复。'}
-    if message.get('tool_calls'):
+    if any(call['name']=='azur_connection_probe' and call['args']=={'value':'ok'} for call in calls):
         tool_status='confirmed'
     return {'available':True,'toolCalling':tool_status,'latencyMs':elapsed,
         'message':('模型可用，工具调用已确认。' if tool_status=='confirmed' else

@@ -13,6 +13,8 @@ type MomentsStatus = {
     | "no_actors"
     | "quiet"
     | "busy"
+    | "responding"
+    | "task_busy"
     | "budget"
     | "pending"
     | "waiting";
@@ -36,6 +38,7 @@ let listScroll = 0,
   disposed = false,
   refreshPending = false;
 let activeLoad: Promise<void> | undefined;
+let statusTimer = 0, statusGeneration = 0;
 function hasMedia(post: Post) {
   return !!post.mediaUrl && !failedMedia.value.has(post.mediaUrl);
 }
@@ -46,10 +49,19 @@ function audienceLabel(post: Post) {
   return post.legacyArchived
     ? "历史归档"
     : !visible(post)
-      ? "仅查看"
+      ? "未向你分享"
       : post.audience?.kind === "selected"
         ? "指定成员"
         : "港区公开";
+}
+function readonlyReason(post: Post) {
+  if (post.legacyArchived) return "历史归档，仅供查看。";
+  const names = post.audience?.actorIds
+    .map((id) => people.value[id]?.name || "港区成员")
+    .join("、");
+  return names
+    ? `作者仅向${names}分享了这条动态，你不在分享范围内。这里以只读记录展示，无法点赞或评论。`
+    : "这条动态未向你分享，这里以只读记录展示，无法点赞或评论。";
 }
 function rememberList() {
   listScroll = feed.value?.scrollTop || 0;
@@ -106,7 +118,9 @@ const statusHint = computed(() => {
     disabled: "自主朋友圈已关闭，可在自主生活设置中启用。",
     no_actors: "当前没有可参与的港区成员。",
     quiet: "当前处于免打扰时段，人物会在时段结束后再考虑。",
-    busy: "当前有任务进行，人物的自主动态会稍后再考虑。",
+    responding: "人物正在回复消息，自主动态会稍后再考虑。",
+    task_busy: "当前有工作委托正在处理，人物的自主动态会稍后再考虑。",
+    busy: "当前正在处理其他事务，人物的自主动态会稍后再考虑。",
     budget: "本小时自主模型额度已用完，额度恢复后再考虑。",
     pending: "已有活动或互动等待人物考虑。",
   };
@@ -128,6 +142,23 @@ function date(value: string) {
   return new Date(value).toLocaleString();
 }
 type PostPage = { posts: Post[]; nextCursor: string | null };
+async function loadStatus(): Promise<void> {
+  const generation = ++statusGeneration;
+  try {
+    const value = await api<MomentsStatus>("/api/posts/status");
+    if (!disposed && generation === statusGeneration && !posts.value.length)
+      status.value = value;
+  } catch {
+    if (!disposed && generation === statusGeneration) status.value = null;
+  }
+}
+function scheduleStatus(): void {
+  if (disposed || posts.value.length || statusTimer) return;
+  statusTimer = window.setTimeout(() => {
+    statusTimer = 0;
+    if (!disposed && !posts.value.length) void loadStatus();
+  }, 250);
+}
 function load(more = false): Promise<void> {
   if (disposed) return Promise.resolve();
   if (activeLoad) {
@@ -168,11 +199,10 @@ async function fetchPosts(more = false): Promise<void> {
       await backToList();
     }
     if (!posts.value.length) {
-      try {
-        status.value = await api<MomentsStatus>("/api/posts/status");
-      } catch {
-        status.value = null;
-      }
+      await loadStatus();
+    } else {
+      ++statusGeneration;
+      status.value = null;
     }
   } catch (e) {
     if (!disposed) error.value = (e as Error).message;
@@ -246,6 +276,7 @@ async function comment(post: Post) {
 }
 function onEvent(event: Event) {
   const kind = (event as CustomEvent<{ type: string }>).detail?.type;
+  if (kind === "run.created" || kind === "run.updated") scheduleStatus();
   if (
     kind === "post.created" ||
     kind === "post.comment.created" ||
@@ -259,6 +290,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   disposed = true;
+  clearTimeout(statusTimer);
+  ++statusGeneration;
   window.removeEventListener("azur-run-event", onEvent);
 });
 </script>
@@ -430,6 +463,9 @@ onUnmounted(() => {
           <p v-if="activePost.legacyArchived" class="muted">
             历史记录只有摘要，无法恢复原文。
           </p>
+          <p v-else-if="!visible(activePost)" class="muted moments-visibility-note">
+            {{ readonlyReason(activePost) }}
+          </p>
           <h3 class="moment-comments-title">
             评论 <span>{{ activePost.comments.length }}</span>
           </h3>
@@ -467,7 +503,7 @@ onUnmounted(() => {
             <span v-if="!visible(activePost)" class="moment-readonly">{{
               activePost.legacyArchived
                 ? "历史归档，仅供查看"
-                : "仅查看，不可参与互动"
+                : "未向你分享，无法点赞或评论"
             }}</span>
           </div>
           <form

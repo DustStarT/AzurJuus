@@ -13,7 +13,7 @@ os.environ.update(
     AZURJUUS_WORKSPACE_STATE_PATH=str(TEST_ROOT / "state" / "workspace-state.json"),
     AZURJUUS_WORKSPACE_ROOT=str(TEST_ROOT / "workspace"),
     AZURJUUS_REDIS_URL="", AZURJUUS_CHROMA_URL="", AZURJUUS_SOCIAL_ENABLED="0",
-    AZURJUUS_EXECUTION_BACKEND="hermes", AZURJUUS_PORT="8879",
+    AZURJUUS_EXECUTION_BACKEND="deepseek-harness", AZURJUUS_PORT="8879",
     AZURJUUS_REFLECTION_ENABLED="0", AZURJUUS_SKILL_TRIALS_ENABLED="0",
 )
 from server import create_server, serve

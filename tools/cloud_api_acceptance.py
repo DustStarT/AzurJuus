@@ -14,11 +14,13 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend.credentials import reveal
+from tools.acceptance_reviews import approve_async
 
 
 async def main():
     with sqlite3.connect((ROOT / '.azurjuus/azurjuus.db').as_uri() + '?mode=ro', uri=True) as db:
-        base, model, protected = db.execute('SELECT llm_base_url,llm_model,llm_api_key FROM workspace_settings LIMIT 1').fetchone()
+        base, model, protected, connected_raw, secretary = db.execute('SELECT llm_base_url,llm_model,llm_api_key,connected_agent_ids,secretary_agent_id FROM workspace_settings LIMIT 1').fetchone()
+    connected=json.loads(connected_raw)
     key = reveal(protected)
     collaborative='--collaborative' in sys.argv
     progress_check='--progress-check' in sys.argv
@@ -29,7 +31,8 @@ async def main():
     os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///' + (home / 'app.db').as_posix(),
         AZURJUUS_WORKSPACE_STATE_PATH=str(home / 'state' / 'workspace.json'), AZURJUUS_WORKSPACE_ROOT=str(work),
         AZURJUUS_REDIS_URL='', AZURJUUS_CHROMA_URL='', AZURJUUS_CHROMA_PATH=str(home/'chroma'),
-        AZURJUUS_SOCIAL_ENABLED='0', AZURJUUS_MIND_ENABLED='1', AZURJUUS_EXECUTION_BACKEND='hermes')
+        AZURJUUS_SOCIAL_ENABLED='0', AZURJUUS_MIND_ENABLED='1', AZURJUUS_EXECUTION_BACKEND='deepseek-harness',
+        AZURJUUS_SKILL_TRIALS_ENABLED='0')
     from server import create_server
     server = create_server(host='127.0.0.1', port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -47,16 +50,18 @@ async def main():
                     pass
                 await asyncio.sleep(.1)
             response = await client.post('/api/workspace/save', json={'workspace': {'settings': {
-                'llmBaseUrl': base, 'llmModel': model, 'llmApiKey': key, 'authorizedWorkspaceRoot': str(work)}}})
+                'llmBaseUrl': base, 'llmModel': model, 'llmApiKey': key, 'authorizedWorkspaceRoot': str(work),
+                'connectedAgentIds':connected,'secretaryAgentId':secretary}}})
             response.raise_for_status()
             (await client.post('/api/life',json={'paused':True})).raise_for_status()
             boot = (await client.get('/api/bootstrap')).json()
             assert key not in json.dumps(boot)
             assert boot['workspace']['settings']['llmApiKeyConfigured']
             report['checks'].append('saved credentials are hidden from bootstrap')
-            cid = next(c['id'] for c in boot['snapshot']['conversations'] if c['kind'] == 'dm')
+            assert set(connected)<={a['id'] for a in boot['snapshot']['agents']}
+            cid = next(c['id'] for c in boot['snapshot']['conversations'] if c['kind'] == 'dm' and secretary in c['memberIds'])
             payload = {'conversationId': cid, 'mode': 'task', 'collaborative':collaborative, 'requestId': uuid4().hex,
-                'content': '读取 input.txt，将 red 与 blue 两个数量相加，将两个来源数量、算式和总数写入 api-report.txt。读取输出核验再 deliver。只处理这两个文件，不执行命令、不联网。'}
+                'content': '先用 method_search 查看可见方法，自主选用或组合 method_select。读取 input.txt，将 red 与 blue 两个数量相加，将两个来源数量、算式和总数写入 api-report.txt。读取输出核验再 deliver。只处理这两个文件，不执行命令、不联网。'}
             accepted = await client.post('/api/messages/send', json=payload)
             accepted.raise_for_status()
             rid = accepted.json()['runId']
@@ -81,9 +86,14 @@ async def main():
                     for call in state['calls']:
                         if call['status'] == 'waiting_approval':
                             raise RuntimeError('Unexpected approval in the file-only HTTP fixture')
+                    report.setdefault('userStageApprovals',[]).extend(await approve_async(client,run,work))
                     await asyncio.sleep(2)
             assert run['status'] == 'completed', run.get('error')
             report['checks'].append('production background scheduler completes real cloud task')
+            assert report.get('userStageApprovals') and all(r['status']=='approved' for r in run.get('stageReviews',{}).values())
+            assert any(c['name']=='method_search' and c['status']=='completed' for c in state['calls'])
+            assert any(c['name']=='method_select' and c['status']=='completed' for c in state['calls'])
+            report['checks'].append('model independently retrieves and selects methods; secretary and synthetic user approve plan, stages and final result')
             index = next(i for i, artifact in enumerate(run['artifacts']) if artifact['path'] == 'api-report.txt')
             downloaded = await client.get(f'/api/runs/{rid}/artifacts/{index}')
             downloaded.raise_for_status()
@@ -128,7 +138,30 @@ async def main():
                 report['checks'].append('later casual reply does not repeat task evidence')
             report['status'] = 'passed'
             report['artifacts'] = run['artifacts']
+            if '--evolution' in sys.argv:
+                owner=next(a for a in run['assignments'] if a['status']=='completed')
+                choice=run.get('methods',{}).get(owner['id'],{})
+                response=await client.post(f"/api/actors/{owner['actorId']}/methods/evolve",
+                    json={'sourceRunId':rid,'basedOn':choice.get('ids',[])},timeout=200)
+                response.raise_for_status();proposal=response.json()
+                report['evolutionProposal']=proposal
+                assert proposal['status']=='awaiting_trial_confirmation',proposal
+                sid=proposal['skillId']
+                response=await client.post(f"/api/actors/{owner['actorId']}/methods/{sid}/confirm_trial",json={})
+                response.raise_for_status()
+                report['checks'].append('real model proposes three scenarios from its verified execution; actual secretary and synthetic user approve bound specification')
+                (await client.post('/api/life',json={'paused':False,'hourlyCalls':200})).raise_for_status()
+                future=asyncio.run_coroutine_threadsafe(server.app.state.runs.growth.trial(owner['actorId'],sid),server._loop)
+                async with asyncio.timeout(900):
+                    await asyncio.wrap_future(future)
+                methods=(await client.get(f"/api/actors/{owner['actorId']}/methods")).json()['skills']
+                skill=next(s for s in methods if s['id']==sid)
+                report['evolutionResult']=skill
+                assert skill['enabled'] and skill['validationCount']==3 and skill['trialSummary']['stable'],skill
+                assert len(skill['trialEvidence'])==6 and all(e['passed'] for e in skill['trialEvidence'] if e['variant']=='candidate')
+                report['checks'].append('six actual Harness runs compare original and evolved method against real files; three candidate scenarios pass and activate')
     except Exception as exc:
+        report['status']='failed'
         report['error'] = str(exc).replace(key, '[redacted]')
     finally:
         server.shutdown()

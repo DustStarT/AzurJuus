@@ -9,6 +9,13 @@ import urllib.request
 from contextlib import suppress
 from pathlib import Path
 
+# Server configuration loads .env. Both renderer switches must be selected
+# before importing WebEngine or constructing the QApplication.
+from server import HOST, PORT, SETTINGS, create_server
+from backend.platform.desktop_graphics import configure_desktop_graphics
+
+DESKTOP_RENDERER = configure_desktop_graphics()
+
 from PySide6.QtCore import QPoint, Qt, QEvent, QUrl, Signal, QTimer
 from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
@@ -21,10 +28,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QLabel,
 )
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
-
-from server import HOST, PORT, SETTINGS, create_server
 
 WINDOW_TITLE = "AzurJuus"
 WINDOW_MIN_WIDTH = 820
@@ -81,6 +86,7 @@ def wait_for_server(base_url: str, timeout: float = HEALTH_TIMEOUT) -> bool:
 
 
 def create_application() -> QApplication:
+    print(f"DESKTOP_RENDERER={DESKTOP_RENDERER}", flush=True)
     app = QApplication(sys.argv)
     app.setApplicationName(WINDOW_TITLE)
     app.setOrganizationName("AzurPort")
@@ -188,6 +194,16 @@ class AzurJuusWindow(QMainWindow):
         settings = profile.settings()
         settings.setAttribute(QWebEngineSettings.LocalStorageEnabled, True)
         settings.setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, False)
+        if DESKTOP_RENDERER == "software":
+            settings.setAttribute(QWebEngineSettings.WebGLEnabled, False)
+        # Keep the texture-corruption workaround, but let the material layer
+        # avoid expensive live background blurs when compositing on the CPU.
+        material = QWebEngineScript()
+        material.setName("AzurJuusDesktopRenderer")
+        material.setInjectionPoint(QWebEngineScript.DocumentReady)
+        material.setRunsOnSubFrames(False)
+        material.setSourceCode(f'document.documentElement.dataset.desktopRenderer = "{DESKTOP_RENDERER}";')
+        profile.scripts().insert(material)
         return profile
 
     def _setup_shell(self):

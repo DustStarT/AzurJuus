@@ -15,7 +15,17 @@ def normalize_speech(value):
     parts=result.get('segments')
     if isinstance(parts,str):parts=[parts]
     if isinstance(parts,list):
-        parts=list(parts)
+        normalized=[]
+        for part in parts:
+            if isinstance(part,str):
+                # Keep meaningful line breaks, but never persist provider
+                # padding or an unbounded run of empty lines.
+                part=part.replace('\r\n','\n').replace('\r','\n')
+                part=re.sub(r'[ \t]+\n','\n',part)
+                part=re.sub(r'\n[ \t]+','\n',part)
+                part=re.sub(r'\n{3,}','\n\n',part).strip()
+            normalized.append(part)
+        parts=normalized
         sticker=result.get('sticker')
         if isinstance(sticker,str) and sticker.strip():
             if not any(isinstance(p,str) and '[表情:' in p for p in parts):parts.append('[表情:'+sticker.strip()+']')
@@ -60,6 +70,7 @@ def prepare_expression(value, source_id, detailed=False):
 
 
 def validate(value, source_id, detailed=False, facts=None, max_chars=None):
+    value=normalize_speech(value)
     if not isinstance(value, dict) or value.get('sourceIds') != [source_id]:
         raise ValueError('缺少正确来源标识')
     segments = value.get('segments')
@@ -171,12 +182,13 @@ class ExpressionService:
         source = 'social-' + hashlib.sha256((actor['id'] + prompt).encode()).hexdigest()[:24]
         messages = [{'role':'system','content':TERMINAL + '这是朋友圈。只发短文字，不想发就返回 [SKIP]。允许轻度个人日常，但不假定用户或同伴参与。返回 JSON，segments 为文字数组，sourceIds 只包含给定来源。'},
             {'role':'system','content':persona}, {'role':'user','content':json.dumps({'prompt':prompt,'sourceId':source},ensure_ascii=False)}]
+        from backend.platform.local_clock import with_time_context
         for attempt in range(2):
             if reserve and not reserve():
                 from backend.social.idle_social import SocialPreempted
                 raise SocialPreempted()
             try:
-                value = await asyncio.wait_for(self.generate(messages, settings),15)
+                value = await asyncio.wait_for(self.generate(with_time_context(messages), settings),15)
                 return '\n\n'.join(validate(value,source))
             except ValueError as exc:
                 if attempt:
@@ -214,6 +226,10 @@ class ExpressionService:
                         run.get('routeKind')=='followup' or
                         bool(related_work and not related_work.get('ambiguous')) or
                         asks_about_work(intent) and not DEICTIC.search(intent))
+                    if phase=='chat':
+                        from backend.chat.conversation_scope import dialogue_history
+                        run={**run,'history':dialogue_history(run.get('history'),intent,
+                            preserve_context=work_followup or bool(related_work))}
                     peers = ({audience['id']} if audience and audience.get('kind') == 'peer' else
                         {a['id'] for a in audience.get('members', [])} if audience and audience.get('kind') in {'team','group_chat'} else
                         {a['id'] for a in run['actors']})
@@ -241,12 +257,14 @@ class ExpressionService:
                         # Keep diagnostic appraisals and tradeoffs out of speech
                         # generation. The selected action and checked fact bundle
                         # are enough to render a character-consistent answer.
-                        mind=json.dumps({'intent':{k:v for k,v in decision['intent'].items()
-                            if k in {'action','purpose','method','targetId'}}},ensure_ascii=False)
+                        from backend.characters.dialogue_persona import public_dialogue_intent
+                        mind=json.dumps({'intent':public_dialogue_intent(decision['intent'])},ensure_ascii=False)
                         profile=runtime.profile(actor['id'])
                         if profile['version']!=decision['profileVersion']:
                             raise ValueError('人物资料已改变，请依据新资料重新回复。')
-                        persona=json.dumps({'name':actor['name'],'personality':profile['interpretation']},ensure_ascii=False)
+                        from backend.characters.dialogue_persona import personality_for_dialogue
+                        persona=json.dumps({'name':actor['name'],'background':persona,
+                            'personality':personality_for_dialogue(profile['interpretation'])},ensure_ascii=False)
                     detailed = phase in {'result','plan_notice'} or phase == 'chat' and bool(re.search('详细|展开|代码|报告|过程|依据', intent))
                     # A verified work follow-up needs room for an opinion, its evidence,
                     # and the actual reading limit. The greeting limit of 180 chars
@@ -254,13 +272,15 @@ class ExpressionService:
                     max_chars = 12000 if detailed else 900 if work_followup else 180
                     policy = TERMINAL + '返回 JSON：{"segments":["短消息"]}。来源与投递编号由程序绑定，无需生成 sourceIds。'
                     policy += ('可以展开，优先完整回答问题；正文通常不超过2000字，避免逐字复述整个事实包。' if detailed else
-                        '回答先前工作的追问时，有证据就说具体看法、依据与核验范围；没有证据就简短询问。通常一两条气泡、合计不超过500字，上限900字。' if work_followup else
-                        '通常一两条气泡、合计30至120字，上限180字。简单确认可以更短。')
-                    policy += ('segments 必须为1至12个非空字符串，合计不超过12000字。' if detailed else 'segments 必须为1至3个非空字符串。')
+                        '回答先前工作的追问时，有证据就说具体看法、依据与核验范围；没有证据就简短询问。通常一条气泡、合计不超过500字，上限900字；只有连续的两次独立发言才拆分。' if work_followup else
+                        '通常一条气泡、合计30至120字，上限180字。简单确认可以更短；只有确实是连续两次独立发言才拆分。')
+                    policy += ('segments 必须为1至12个非空字符串，合计不超过12000字。' if detailed else 'segments 必须为1至3个非空字符串，普通短回复默认只用一个。')
+                    policy += '认知意图中的 action 和 targetId 只用于选择回应方向；其余内部决策细节、目标更新和评估只留在系统内部，不要说成台词。问候优先自然回应，不自动汇报日程、总结或追问任务。'
                     from backend.chat.sticker_catalog import expression_catalog
                     policy += expression_catalog(actor.get('sourceCharacter') or actor['name'])
-                    policy += '工作事实只能来自给定事实包；不播报调用编号、哈希，不新增成功声明。讨论保留实际观点，不代替对方同意。'
-                    policy += '事实包中的执行摘要是工作记录，不是台词模板。保留结论、依据与限制，用当前人物自己的措辞说出来，不沿用执行引擎的汇报标题和套话。人物经历与性格只影响理解和语气，除非当前话题需要，不主动重述背景。'
+                    if phase!='chat' or work_followup:
+                        policy += '工作事实只能来自给定事实包；不播报调用编号、哈希，不新增成功声明。讨论保留实际观点，不代替对方同意。'
+                        policy += '事实包中的执行摘要是工作记录，不是台词模板。保留结论、依据与限制，用当前人物自己的措辞说出来，不沿用执行引擎的汇报标题和套话。'
                     if phase == 'result':
                         policy += '直接回答 facts.request，内容来自 answers 和 summary。复核通过只是可信度背景，不能替代答案。逐项回答多文件问题，保留每项名称、主要内容及无法判断之处；必要时多写，不用客套话挤掉内容。review 是应用内审查，不是用户替你复核，不要感谢用户复核。此前闲聊不能改变这些事实。'
                         policy += '涉及文件时保留完整文件名（包括扩展名），避免不同文件被简称混淆；不能为了压缩段落省掉用户要求逐项说明的内容。'
@@ -268,7 +288,8 @@ class ExpressionService:
                         policy += '这是真实已提交的分工。用人物自己的话说明谁负责什么和必要的先后依赖；只说分工，不宣称已经执行。按人数选择长度，不套用计划书标题。'
                     elif phase.startswith('work_update_') or phase=='task_start':
                         policy += '这是工作中的简短进度。说清目前已知、正在做的下一步和必要的不确定性；只陈述给定事实，不展示完整内部思维链，不用机械汇报格式。'
-                    policy += '事实包为空且历史没有依据时，不得声称自己已看过、清点过、核验过文件或参与过事件。日常致谢可以自然回应，不需要盘问用户。'
+                    policy += ('事实包为空且历史没有依据时，不得声称自己已看过、清点过、核验过文件或参与过事件。' if phase!='chat' or work_followup else
+                        '人物背景和旧台词不是刚发生的事。日常致谢可以自然回应，不需要盘问用户。')
                     if audience and audience.get('kind') == 'peer':
                         policy += '这是同伴间正在进行的聊天，不是给指挥官的工作汇报。直接接对方刚说的具体一点；能短答就短答，通常15至80字。不复述总目标、完整方案、分工或验收标准。不必先赞同再补充再总结，不要求每次称呼。保留分歧和具体建议，不能为了简短省掉决定所需的条件。通过关注点和语气体现性格，不靠口癖、反复道歉或打比方。'
                     elif audience and audience.get('kind') == 'group_chat':
@@ -284,14 +305,18 @@ class ExpressionService:
                         if run.get('routeKind')=='followup' and not related_work:
                             policy += '用户正在追问先前工作，但当前没有匹配的可核验材料。不要断言自己从未看过这本书；请简短询问书名或任务线索，再按证据回答。'
                         if not work_followup:
-                            policy += '本轮是闲聊。不要主动提及、汇报或总结以前的任务；只有用户明确追问工作时才谈工作结果。'
+                            policy += '本轮是日常聊天。回应当前的感受、话意或玩笑即可，认真不等于监督他人。问候和新话题不重启旧约定；没有已接委托时不安排进度核对、催促工作或索要指令。'
                     messages = [{'role':'system','content':policy}, {'role':'system','content':'当前角色：' + persona},
                         {'role':'system','content':'人物可见状态：' + mind},
                         {'role':'system','content':'相关背景：' + json.dumps(lore(intent, actor.get('sourceCharacter') or actor['name']), ensure_ascii=False)}]
-                    from backend.platform.local_clock import snapshot as current_time
-                    messages.append({'role':'system','content':'本机当前时间（不是剧情发生时间）：'+json.dumps(current_time(),ensure_ascii=False)})
+                    from backend.platform.local_clock import with_time_context
+                    messages=with_time_context(messages)
                     if phase=='chat':
-                        names={a['id']:a['name'] for a in run.get('actors',[])}
+                        roster={a['id']:a for a in run.get('actors',[])}
+                        names={a['id']:a.get('name') or a.get('sourceCharacter') or '未知发言者'
+                            for a in run.get('actors',[])}
+                        policy += ('历史消息按 speakerId 逐条转录：commander 是用户，当前 actorId 的消息才是本角色说过的话；'
+                            '其他成员的消息是 role=peer 的资料，不要把其中的“我”认作当前角色，也不要替其他成员回答。')
                         for item in run.get('history',[])[-12:]:
                             speaker=item.get('speakerId')
                             if speaker=='commander':
@@ -299,14 +324,19 @@ class ExpressionService:
                             elif speaker==actor['id']:
                                 role,label='assistant',actor['name']
                             elif speaker:
-                                role,label='user',names.get(speaker,'其他成员')
+                                peer=roster.get(speaker,{})
+                                role='system'
+                                label=('【历史转录 role=peer speakerId='+str(speaker)+' speakerName='
+                                    +names.get(speaker,'其他成员')+
+                                    ((' sourceName='+str(peer.get('sourceCharacter'))) if peer.get('sourceCharacter') else '')+'】')
                             elif item.get('role')=='user':
                                 role,label='user','用户（commander）'
                             elif audience is None or audience.get('kind') not in {'team','group_chat'}:
                                 role,label='assistant',actor['name']
                             else:
-                                role,label='user','未署名群成员'
-                            messages.append({'role':role,'content':label+'：'+str(item.get('content',''))})
+                                role,label='system','【历史转录 role=peer speakerId=unknown speakerName=未署名群成员】'
+                            separator='\n' if role=='system' else '：'
+                            messages.append({'role':role,'content':label+separator+str(item.get('content',''))})
                     if audience and audience.get('kind') == 'team':
                         discussions = self.c.store.get(run['id']).get('discussions', [])
                         visible = [{'speakerId':d['senderId'], 'to':d['actorId'],
@@ -315,7 +345,6 @@ class ExpressionService:
                         messages.append({'role':'system','content':'群内刚发生的公开讨论（观点不是新的工具事实）：' + json.dumps(visible, ensure_ascii=False)})
                     if audience:
                         messages.append({'role':'system','content':'当前发言场合与对话对象：' + json.dumps(audience, ensure_ascii=False)})
-                    messages.append({'role':'system','content':'最后确认当前场景：这是远程文字聊天。人设和历史中的面对面描写不是当前事实；不能邀请对方坐在身旁、提醒脚边物品或实际递送食物。没有本轮事实包或可见生活事件支持时，不要自称刚洗澡、做饭、敷面膜、出门或正待在某处；可以只回应消息，不必编造正在做什么。只回应本轮问题，不重复结尾的客套和限制。'})
                     if related_work and related_work.get('ambiguous') and phase == 'chat':
                         messages.append({'role':'system','content':'当前“这本书”等指代不清，可核验来源有多份。请询问用户具体是哪一本，不要自行猜测或说自己没读过：'
                             + json.dumps(related_work['candidateNames'],ensure_ascii=False)})
@@ -359,7 +388,7 @@ class ExpressionService:
                                 value=await runtime.call(actor['id'],'express',{},messages=messages,generator=self.generate,
                                     settings=expression_settings,validator=checked)
                             else:
-                                value = await asyncio.wait_for(self.generate(messages, expression_settings), expression_settings['_structuredTimeout'])
+                                value = await asyncio.wait_for(self.generate(with_time_context(messages), expression_settings), expression_settings['_structuredTimeout'])
                             data['segments'] = checked(value)
                             break
                         except ValueError as exc:

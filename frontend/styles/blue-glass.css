@@ -1,0 +1,337 @@
+/* The shell's material system. Feature files keep their own layout rules. */
+:root {
+  --cyan: #2c86c8;
+  --blue: #1b5a8a;
+  --ink: #213c58;
+  --muted: #6c8499;
+  --line: #cadbe7;
+  --surface: #eef5fa;
+  --paper: #f9fcffed;
+  --glass: #f8fcffb8;
+  --selected: #e7f3fc;
+  --shadow: 0 18px 48px #244e721a, 0 2px 8px #244e720a;
+  --radius-panel: 20px;
+  --radius-control: 12px;
+  --nav-width: 88px;
+  --layout-gap: 14px;
+  --topbar-height: 54px;
+  --bubble-radius: 15px;
+  --duration-button: 170ms;
+  --duration-message: 220ms;
+  --duration-panel: 280ms;
+}
+
+html,
+body {
+  background: #dfeaf2;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 81% 10%, #ecfaff 0%, transparent 36%),
+    radial-gradient(ellipse at 27% 88%, #bbd8ed 0%, transparent 43%),
+    linear-gradient(135deg, #d9e8f2 0%, #edf4f8 55%, #d4e5f0 100%);
+}
+
+.juus-shell {
+  position: relative;
+  padding-right: var(--layout-gap);
+}
+
+.rail {
+  border: 1px solid #ffffff38;
+  border-left: 0;
+  border-radius: 0 24px 24px 0;
+  background: linear-gradient(169deg, #102f4b 0%, #194e73 51%, #286a91 100%);
+  color: #d9efff;
+  box-shadow: 8px 0 30px #153e6229, inset -1px 0 #ffffff30;
+}
+
+.rail::before {
+  background:
+    radial-gradient(ellipse at 5% 10%, #84c8f44d, transparent 39%),
+    radial-gradient(ellipse at 95% 92%, #85c9f633, transparent 40%),
+    linear-gradient(112deg, transparent 38%, #ffffff09 48%, transparent 57%);
+}
+
+.brand {
+  margin-top: 20px;
+  color: #f1faff;
+  font-size: 18px;
+  letter-spacing: -0.8px;
+  text-shadow: 0 1px 12px #92d8ff55;
+}
+
+.brand span:last-child { color: #7ccbf5; }
+.rail-nav { margin-bottom: 35px; gap: 11px; }
+.rail-nav > button {
+  position: relative;
+  width: 66px;
+  height: 64px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  color: #afd3e8;
+  transition: background var(--duration-button) var(--ease),
+    border-color var(--duration-button) var(--ease),
+    transform var(--duration-button) var(--ease),
+    box-shadow var(--duration-button) var(--ease);
+}
+.rail-nav > button:hover,
+.rail-work:hover {
+  background: #d9efff1e;
+  color: #f3fbff;
+  transform: translateY(-2px);
+}
+.rail-nav > button.active {
+  color: #fff;
+  border-color: #d8f3ff5e;
+  background: linear-gradient(145deg, #cdeaff46, #a8d9f824);
+  box-shadow: 0 8px 18px #0d2d4966, inset 0 1px #ffffff5c;
+}
+.rail-nav > button.active::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  width: 3px;
+  height: 25px;
+  border-radius: 0 3px 3px 0;
+  background: #9fe1ff;
+  box-shadow: 0 0 11px #81d7ff;
+}
+.rail-nav > button > span { letter-spacing: 2px; }
+.rail-rule { width: 44px; background: #d9efff42; }
+.rail-work { color: #b7d6ea; border-radius: 12px; }
+.rail-work i { background: #e77c86; }
+.rail-bottom > .connection-dot.connected { background: #83dbbb; box-shadow: 0 0 9px #83dbbb; }
+
+.workspace { padding-top: 3px; }
+.topbar { padding-left: 9px; }
+.wordmark {
+  color: #396684;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 2.3px;
+}
+.topbar-status {
+  gap: 9px;
+  color: #54748c;
+  font-size: 11px;
+  font-weight: 550;
+}
+.topbar-status .status-dot.connected { box-shadow: 0 0 0 4px #70cfac29; }
+.topbar-status > .icon-button {
+  width: 31px;
+  height: 31px;
+  border: 1px solid #ffffffb0;
+  background: #ffffff88;
+  box-shadow: 0 2px 8px #365f7b12;
+}
+.icon-button:hover { background: #e3f3fc; color: #1c689f; }
+.icon-button.selected { color: #1e74ae; background: #d9effd; }
+
+/* Conversations form one quiet glass surface; the selected room is the focus. */
+.conversation-panel {
+  padding: 10px;
+  border: 1px solid #fff;
+  border-radius: var(--radius-panel);
+  background: linear-gradient(160deg, #ffffffa8, #eff8fcb8);
+  box-shadow: var(--shadow), inset 0 1px #ffffffd9;
+  backdrop-filter: blur(20px) saturate(1.22);
+  -webkit-backdrop-filter: blur(20px) saturate(1.22);
+  animation: glass-appear 360ms var(--ease) backwards;
+}
+.list-tools {
+  height: 51px;
+  padding-inline: 13px;
+  border: 1px solid #ffffffdc;
+  border-radius: 13px;
+  background: #ffffffbb;
+  box-shadow: 0 3px 12px #3562800a, inset 0 1px #fff;
+}
+.search-field { color: #7895aa; }
+.search-field input::placeholder { color: #8199ab; }
+.list-heading { padding: 12px 8px 8px; color: #52708a; font-weight: 650; }
+.list-heading small { color: #8298a9; font-weight: 500; }
+.conversation-list { gap: 3px; padding: 0 2px 6px 0; }
+.conversation-card {
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  box-shadow: none;
+  transition: background var(--duration-button) var(--ease),
+    border-color var(--duration-button) var(--ease),
+    box-shadow var(--duration-button) var(--ease),
+    transform var(--duration-button) var(--ease);
+}
+.conversation-card:hover {
+  border-color: #ffffffbd;
+  background: #ffffff9c;
+  transform: translateX(2px);
+}
+.conversation-card.active {
+  border-color: #9dcbe8;
+  background: linear-gradient(105deg, #d8edfb, #f7fcffde 90%);
+  box-shadow: inset 3px 0 #287fba, 0 6px 15px #2d6b9519, inset 0 1px #fff;
+}
+.conversation-card.active .conversation-copy p { color: #4b87ad; }
+.conversation-title strong { font-weight: 650; }
+.avatar { border-color: #fff; box-shadow: 0 2px 8px #234d6d24, 0 0 0 1px #d6e8f1; }
+.filter-row button.active { background: #d9edfa; color: #1f6e9f; }
+
+.chat-panel {
+  border: 1px solid #ffffffdb;
+  border-radius: var(--radius-panel);
+  background: #eaf2f8;
+  box-shadow: var(--shadow), inset 0 1px #fff;
+  animation: glass-appear 420ms var(--ease) backwards;
+}
+.chat-header,
+.composer {
+  border-color: #ffffffcf;
+  background: #f9fcffcc;
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+.chat-header { min-height: 56px; padding-inline: 20px; }
+.chat-heading h1 { font-size: 17px; letter-spacing: .01em; }
+.chat-heading p { margin-top: 3px; color: #66889f; }
+.chat-scene {
+  background:
+    radial-gradient(ellipse at 76% 8%, #f8fdffb8, transparent 42%),
+    linear-gradient(155deg, #dcebf5, #edf4f9 55%, #e2edf5);
+}
+.chat-scene::after { background: linear-gradient(0deg, #edf5fbba, transparent 48%); }
+.character-backdrop { opacity: .17; filter: saturate(.75) brightness(1.12); }
+.message-scroll { padding: 18px 22px 13px; }
+.day-divider { color: #708a9f; }
+.message-author { color: #5f7b90; }
+.message-bubble {
+  border: 1px solid #ffffffeb;
+  border-radius: 5px var(--bubble-radius) var(--bubble-radius) var(--bubble-radius);
+  background: #ffffffd9;
+  box-shadow: 0 5px 16px #30597916, inset 0 1px #fff;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.message-row--self .message-bubble {
+  border-color: #8cc6ec;
+  background: linear-gradient(135deg, #307fba, #1d689f);
+  box-shadow: 0 7px 18px #1e659d38, inset 0 1px #ffffff45;
+}
+.message-row--self .avatar { background: #377eab; }
+.typing-indicator > span { background: #3d97c9; }
+.inline-task {
+  border-color: #a9cde3;
+  background: #f8fcffda;
+  color: #376f92;
+  box-shadow: 0 5px 17px #30628112;
+}
+.inline-task:hover { border-color: #6eaed1; background: #fff; }
+.task-symbol { background: #dceff9; color: #327fab; }
+.composer { padding: 9px 16px 10px; }
+.composer-tool summary:hover,
+.composer-tool-button:hover,
+.composer-tool[open] summary,
+.composer-tool-button[aria-expanded="true"] { color: #1b72a8; background: #dff0fb; }
+.composer-tool-panel,
+.member-popover,
+.mention-options {
+  border-color: #c5deec;
+  background: #f9fcfff0;
+  box-shadow: 0 16px 34px #214e702b;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.composer-input textarea { color: #26445e; }
+.composer-input textarea::placeholder { color: #8099ab; }
+.send-button,
+.primary-button {
+  border-radius: 10px;
+  background: linear-gradient(135deg, #358dc9, #176aab);
+  box-shadow: 0 6px 16px #1b6ba734, inset 0 1px #ffffff55;
+}
+.send-button:hover,
+.primary-button:hover { background: linear-gradient(135deg, #429bd3, #1b74b4); }
+.soft-button { border-radius: 10px; }
+
+/* The same material is used for moments, settings and the run drawer. */
+.circle-toolbar,
+.moments-card,
+.moment-detail {
+  border: 1px solid #ffffffd9;
+  box-shadow: var(--shadow), inset 0 1px #fff;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.circle-toolbar,
+.moments-card { background: #f8fcffb8; }
+.moments-card:hover { background: #fffefef0; transform: translateY(-2px); }
+.moment-art { background: linear-gradient(155deg, #8fc5e4, #d3e8f3 64%, #8bb6d2); }
+.moments-count svg { fill: #e58594; stroke: #e58594; }
+.modal-scrim,
+.drawer-scrim {
+  background: #0d2c4a69;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+.settings-modal,
+.work-drawer {
+  border-color: #ffffffc9;
+  background: #f2f8fce8;
+  box-shadow: 0 26px 70px #092e4a55;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+.settings-nav { background: #dcebf5c9; }
+.settings-nav button.active { background: #fafdff; box-shadow: inset 3px 0 #287fba, 0 4px 11px #2c658712; }
+.settings-footer { background: #edf6fbdc; }
+
+@keyframes glass-appear {
+  from { opacity: .7; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* CPU compositing must not blur the background again for every scrolling card
+   and bubble. Preserve the blue material with translucent, shaded surfaces. */
+:root[data-desktop-renderer="software"] :is(
+  .conversation-panel, .chat-header, .composer, .message-bubble,
+  .composer-tool-panel, .member-popover, .mention-options,
+  .circle-toolbar, .moments-card, .moment-detail,
+  .modal-scrim, .drawer-scrim, .settings-modal, .work-drawer
+) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-desktop-renderer="software"] .character-backdrop { filter: none; }
+:root[data-desktop-renderer="software"] .conversation-panel {
+  background: linear-gradient(160deg, #f9fcfff0, #edf6fbe8);
+}
+:root[data-desktop-renderer="software"] :is(.chat-header, .composer) { background: #f6fafff2; }
+:root[data-desktop-renderer="software"] .message-row:not(.message-row--self) .message-bubble { background: #ffffffed; }
+:root[data-desktop-renderer="software"] .message-bubble {
+  box-shadow: 0 2px 5px #30597914, inset 0 1px #ffffffb0;
+}
+:root[data-desktop-renderer="software"] :is(.circle-toolbar, .moments-card) { background: #f8fcfff0; }
+:root[data-desktop-renderer="software"] :is(.settings-modal, .work-drawer) { background: #f2f8fcfa; }
+
+@media (max-width: 800px) {
+  .juus-shell { padding-right: 8px; }
+  .rail { border-radius: 0 18px 18px 0; }
+  .rail-nav > button { width: 48px; height: 56px; }
+  .rail-nav > button.active::before { left: -9px; }
+  .conversation-panel { padding: 7px; }
+  .message-scroll { padding-inline: 13px; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .conversation-panel,
+  .chat-header,
+  .composer,
+  .circle-toolbar,
+  .moments-card { background: #f8fcff; }
+  .message-bubble { background: #fff; }
+}

@@ -1,7 +1,9 @@
-import { reactive, ref, shallowRef } from "vue";
-import type { Workspace, Run, RunEvent, ToolCall } from "./types";
+import { ref, shallowRef, provide } from "vue";
+import type { Workspace, Run, RunEvent } from "./types";
 import { liveSpeechIds } from '../features/chat/speechQueue';
 import { preloadAssets } from "./assets";
+import { createKernelRuntime, kernelRuntimeKey } from "./kernel-runtime";
+import type { WorkflowDetail } from "./kernel-runtime";
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
@@ -24,12 +26,12 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
 
 export function useWorkspace() {
   const workspace = shallowRef<Workspace>();
-  const runs = ref<Run[]>([]);
+  const kernel = createKernelRuntime();
+  provide(kernelRuntimeKey, kernel);
+  const runs = kernel.runs;
   const online = ref(false);
   const error = ref("");
-  const streams = reactive<
-    Record<string, { actorId: string; text: string; phase: string; messageId: string; createdAt: string; done: boolean }>
-  >({});
+  const streams = kernel.streams;
   let cursor = 0,
     socket: WebSocket | undefined,
     reconnect = 0,
@@ -39,6 +41,7 @@ export function useWorkspace() {
     batch: RunEvent[] = [],
     frame = 0;
   let initialized = false;
+  let eventQueue: Promise<void> = Promise.resolve();
   let refreshGeneration = 0;
   async function refresh() {
     const generation = ++refreshGeneration;
@@ -47,28 +50,16 @@ export function useWorkspace() {
         api<{ workspace: Workspace }>("/api/bootstrap"),
         api<{ runs: Run[]; cursor: number }>("/api/runtime/state"),
       ]);
-      if (generation !== refreshGeneration) return;
+      if (generation !== refreshGeneration || stopped) return;
       workspace.value = boot.workspace;
       preloadAssets(boot.workspace.data.agents);
-      const incomingIds = new Set(active.runs.map(r => r.id));
-      // A snapshot started before a websocket event must not erase that new run.
-      if (active.cursor >= cursor) runs.value = runs.value.filter(r => incomingIds.has(r.id));
-      for (const run of active.runs) {
-        const index = runs.value.findIndex((r) => r.id === run.id);
-        if (index === -1) runs.value.push(run);
-        else if (run.updatedAt >= runs.value[index].updatedAt)
-          runs.value[index] = run;
-      }
-      runs.value.sort((a, b) => b.updatedAt - a.updatedAt);
+      kernel.hydrateRuns(active.runs, active.cursor);
       if (!initialized) {
         cursor = active.cursor;
         initialized = true;
       }
       const saved = Object.values(boot.workspace.data.messages).flat();
-      for (const key in streams) {
-        const stream = streams[key];
-        if (stream.done && saved.some(m => m.id === stream.messageId && m.body === stream.text)) delete streams[key];
-      }
+      kernel.pruneMessages(saved.map(message => ({ id: message.id, body: message.body })));
       error.value = "";
     } catch (e) {
       if (generation !== refreshGeneration) return;
@@ -85,7 +76,18 @@ export function useWorkspace() {
   }
   function flush() {
     frame = 0;
-    for (const event of batch) {
+    const pending = batch;
+    batch = [];
+    eventQueue = eventQueue.then(() => processEvents(pending)).catch(e => {
+      if (!stopped) {
+        error.value = (e as Error).message;
+        scheduleRefresh();
+      }
+    });
+  }
+  async function processEvents(pending: RunEvent[]) {
+    for (const event of pending) {
+      if (stopped) return;
       if (event.type === "runtime.sync") {
         cursor = event.seq;
         scheduleRefresh();
@@ -94,20 +96,30 @@ export function useWorkspace() {
       if (event.seq <= cursor) continue;
       if (cursor && event.seq !== cursor + 1) scheduleRefresh();
       cursor = event.seq;
-      if (event.type === 'mind.changed') window.dispatchEvent(new CustomEvent('azur-mind-changed', {detail:event.payload}));
-      if (event.type === "run.removed") {
-        runs.value = runs.value.filter(r => r.id !== event.runId);
-        for (const key in streams) if (key.startsWith(event.runId + ":")) delete streams[key];
-      } else if (event.type === "run.updated" || event.type === "run.created") {
-        const run = event.payload as unknown as Run;
-        const i = runs.value.findIndex((r) => r.id === run.id);
-        if (i === -1) runs.value.unshift(run);
-        else runs.value[i] = run;
-        if (
-          ["completed", "failed", "cancelled", "paused"].includes(run.status)
-        ) {
-          for (const key in streams)
-            if (key.startsWith(run.id + ":")) streams[key].done = true;
+      try {
+        await kernel.ingest(event);
+        if (stopped) return;
+      } catch (e) {
+        error.value = (e as Error).message;
+        scheduleRefresh();
+        continue;
+      }
+      if (event.type === 'mind.changed') {
+        window.dispatchEvent(new CustomEvent('azur-mind-changed', {detail:event.payload}));
+      } else if (event.type === 'mind.observation') {
+        // The cognition worker normally follows observations with mind.changed.
+        // Notify the panel from the source event as well so a freshly opened tab
+        // does not miss a refresh while the projection event is being queued.
+        const actorIds = Array.isArray((event.payload as {actorIds?: unknown}).actorIds)
+          ? (event.payload as {actorIds: unknown[]}).actorIds
+          : [];
+        for (const actorId of actorIds) {
+          window.dispatchEvent(new CustomEvent('azur-mind-changed', {detail:{actorId}}));
+        }
+      }
+      if (event.type === "run.updated" || event.type === "run.created") {
+        const run = runs.value.find(item => item.id === event.runId);
+        if (run && ["completed", "failed", "cancelled", "paused"].includes(run.status)) {
           scheduleRefresh();
         }
       } else if (event.type === 'social.message') {
@@ -115,25 +127,10 @@ export function useWorkspace() {
         scheduleRefresh();
       } else if (event.type === 'social.reply_deferred') {
         scheduleRefresh();
-      } else if (["message.start", "message.delta", "message.complete"].includes(event.type)) {
-        const p = event.payload;
-        const messageId = String(p.messageId || event.runId + ":" + p.assignmentId);
-        const key = event.runId + ":" + messageId;
-        const entry = (streams[key] ||= {
-          actorId: String(p.actorId),
-          phase: String(p.assignmentId),
-          text: "",
-          messageId,
-          createdAt: new Date(event.at * 1000).toISOString(),
-          done: false,
-        });
-        if (event.type === "message.start") { entry.text = ""; entry.done = false; }
-        else if (event.type === "message.complete") {
-          if (p.expression) liveSpeechIds.add(messageId);
-          entry.text = String(p.text || entry.text);
-          entry.done = true;
-          scheduleRefresh();
-        } else entry.text += String(p.delta || p.text || "");
+      } else if (event.type === "message.complete") {
+        const messageId = String(event.payload.messageId || event.runId + ":" + event.payload.assignmentId);
+        if (event.payload.expression) liveSpeechIds.add(messageId);
+        scheduleRefresh();
       } else if (
         ["conversation.changed", "workspace.changed"].includes(event.type)
       )
@@ -142,7 +139,6 @@ export function useWorkspace() {
         new CustomEvent("azur-run-event", { detail: event }),
       );
     }
-    batch = [];
   }
   function connect() {
     if (stopped) return;
@@ -174,6 +170,8 @@ export function useWorkspace() {
   }
   async function start() {
     try {
+      await kernel.start();
+      if (stopped) return;
       await refresh();
     } finally {
       connect();
@@ -185,9 +183,14 @@ export function useWorkspace() {
     clearTimeout(reconnect);
     clearTimeout(refreshTimer);
     cancelAnimationFrame(frame);
+    batch = [];
+    ++refreshGeneration;
+    void kernel.stop();
   }
   async function inspect(id: string) {
-    return api<{ run: Run; calls: ToolCall[] }>(`/api/runs/${id}`);
+    const detail = await api<WorkflowDetail>(`/api/runs/${id}`);
+    if (!stopped) kernel.hydrateDetail(detail);
+    return detail;
   }
   return {
     workspace,

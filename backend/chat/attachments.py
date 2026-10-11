@@ -29,10 +29,16 @@ def resolve(ids,cid,settings):
         metadata=root/(aid+'.json')
         if metadata.is_symlink(): raise ValueError('附件元数据无效。')
         meta=json.loads(metadata.read_text(encoding='utf-8'))
-        if meta.get('suffix') not in TYPES: raise ValueError('附件类型无效。')
+        if (not isinstance(meta, dict) or meta.get('id') != aid
+                or not isinstance(meta.get('name'), str) or not isinstance(meta.get('conversationId'), str)
+                or not isinstance(meta.get('mime'), str)
+                or meta.get('mime') not in set(TYPES.values())):
+            raise ValueError('附件元数据无效。')
+        if not isinstance(meta.get('suffix'), str) or meta['suffix'] not in TYPES: raise ValueError('附件类型无效。')
         if meta['conversationId']!=cid: raise ValueError('附件不属于此会话。')
         path=root/(aid+meta['suffix'])
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()): raise ValueError('附件路径无效。')
+        if not path.is_file(): raise ValueError('附件文件不存在。')
         result.append({**meta,'path':str(path)})
     return result
 

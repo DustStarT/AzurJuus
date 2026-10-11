@@ -17,22 +17,43 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let wasStreaming = !!props.streaming;
 function sentences() {
   if (props.single) return [{ text: props.text, bubble: 0 }];
-  if (!wasStreaming && !props.streaming) return props.text.split(/\n\n+/).filter(s => s.trim()).map((text,bubble) => ({text,bubble}));
+  const source = props.text.replace(/\r\n?/g, '\n');
+  if (!wasStreaming && !props.streaming) {
+    const parts = source.split(/(\n\n+)/);
+    const result: { text: string; bubble: number }[] = [];
+    let bubble = 0;
+    for (let i = 0; i < parts.length; i += 2) {
+      const text = (parts[i] || "").trim();
+      if (text) result.push({ text, bubble: bubble++ });
+    }
+    return result;
+  }
   const result: { text: string; bubble: number }[] = [];
   let start = 0, bubble = 0, fenced = false;
-  for (let i = 0; i < props.text.length; i++) {
-    if (props.text.slice(i, i + 3) === '```') { fenced = !fenced; i += 2; continue; }
+  for (let i = 0; i < source.length; i++) {
+    if (source.slice(i, i + 3) === '```') { fenced = !fenced; i += 2; continue; }
     if (fenced) continue;
-    const pause = props.text.slice(i, i + 2) === '\n\n';
-    if (pause || /[。！？!?]/.test(props.text[i]!)) {
-      const end = i + (pause ? 2 : 1);
-      const text = props.text.slice(start, end);
-      if (text.trim()) result.push({ text, bubble });
-      if (pause) { bubble = Math.min(3, bubble + 1); i++; }
-      start = end;
+    const pause = source.slice(i, i + 2) === '\n\n';
+    if (pause || /[。！？!?]/.test(source[i]!)) {
+      if (pause) {
+        const text = source.slice(start, i).trim();
+        if (text) result.push({ text, bubble });
+        bubble = Math.min(3, bubble + 1);
+        while (i < source.length && source[i] === '\n') i++;
+        start = i;
+        i--;
+      } else {
+        const end = i + 1;
+        const text = source.slice(start, end);
+        if (text.trim()) result.push({ text, bubble });
+        start = end;
+      }
     }
   }
-  if (!props.streaming && start < props.text.length) result.push({ text: props.text.slice(start), bubble });
+  if (!props.streaming && start < source.length) {
+    const text = source.slice(start).trim();
+    if (text) result.push({ text, bubble });
+  }
   return result;
 }
 const readyParts = computed(sentences);

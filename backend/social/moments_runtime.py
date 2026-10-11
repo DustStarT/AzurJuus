@@ -17,6 +17,7 @@ from backend.social.social_models import SocialPublication, SocialShareConsent
 
 
 class PostDraft(BaseModel):
+    publish: bool
     kind: Literal['thought', 'event', 'new_activity'] = 'thought'
     body: str = Field(default='', max_length=4000)
     audienceKind: Literal['port', 'selected'] = 'port'
@@ -81,7 +82,8 @@ class MomentsRuntime:
         elif not cfg['settings']['momentsEnabled'] or not (setting and setting.allow_idle_social):reason='disabled'
         elif not actors:reason='no_actors'
         elif self.runtime.life.quiet():reason='quiet'
-        elif self.runtime.background_blocked():reason='busy'
+        elif self.runtime.background_blocked():
+            reason={'chat':'responding','task':'task_busy'}.get(self.c.foreground_activity(),'busy')
         elif cfg['callsLastHour']>=cfg['settings']['hourlyCalls']:reason='budget'
         elif data.get('pending'):reason='pending'
         else:reason='waiting'
@@ -232,7 +234,7 @@ class MomentsRuntime:
                 if daily['interactions'].get(actor_id,0)>=cfg['momentsActorDailyInteractions'] or sum(daily['interactions'].values())>=cfg['momentsDailyInteractions']:
                     self._finish(key,actor_id)
                     continue
-                await self._attempt(key,actor_id,lambda: self._interact(actor_id,post.id,key,comment.body))
+                await self._attempt(key,actor_id,lambda: self._interact(actor_id,post.id,key,comment.body,comment.author_id))
                 return
             actor_id=identifier if kind=='thought' else ''
             event=None
@@ -314,24 +316,40 @@ class MomentsRuntime:
 
     async def _post(self,actor_id,key,event):
         revision=self.runtime.revision
-        source='moments-decision:'+key+':'+actor_id
+        # The recurring thought key identifies an opportunity, not a permanent
+        # decision. Reconsider on each attempt instead of replaying yesterday.
+        source='moments-publication:'+key+':'+actor_id+':'+str(time.time_ns())
         decision=await self.runtime.think(actor_id,source,
-            '决定是否在朋友圈分享。只是想法可表达观点；声称新经历时先提出受校验的生活活动，不能直接编造已经发生。'
+            '这里是朋友圈发布判断，不是群聊续接。publish 表示现在愿意发表一条独立动态；wait 表示不发，包括先继续聊天或等事情发生后再分享。'
+            '聊天中有回应对象，不等于要向那个人单独发动态。想法可以分享；新经历须先有受校验的生活活动，不能编造已经发生。'
             +('当前已发生的活动：'+event['text'] if event else '当前没有待分享的已发生活动。'),
-            mode='moments',background=True,actions=['speak','wait'],include_task_memory=False)
-        if decision['intent']['action']!='speak':return 'wait'
+            mode='moments',background=True,actions=['publish','wait'],include_task_memory=False)
+        if decision['intent']['action']!='publish':return 'wait'
         profile=self.runtime.profile(actor_id)
+        from backend.characters.dialogue_persona import personality_for_dialogue, public_dialogue_intent
+        with session_scope() as session:
+            from backend.characters.character_identity import roster_actors
+            recipients=[{'id':actor.id,'name':actor.name} for actor in roster_actors(session)]
+            commander=session.get(Actor,'commander')
+            if commander:recipients.append({'id':commander.id,'name':commander.name})
         draft=await self.runtime.call(actor_id,'moments_post',{
-            'profile':profile['interpretation'],'intent':decision['intent'],
+            'actorId':actor_id,'audienceOptions':recipients,
+            'profile':personality_for_dialogue(profile['interpretation']),'intent':public_dialogue_intent(decision['intent']),
             'event':event,'allowedKinds':['event'] if event else ['thought','new_activity'],
-            'rule':'只写本人会发表的短动态。thought 只能表达观点或打算，不能声称刚完成未经记录的活动。event 只能依据给定事件。new_activity 不发布，交给生活状态机。受众 selected 仅用真实人物编号。',
+            'rule':'只写本人此刻愿意发表的独立短动态，不把聊天接话、点单确认或决定不发的说明变成动态。'
+                '若现在不想发，publish=false 且 body 留空；无需把不发的原因写给读者。'
+                'thought 可表达观点或打算，不能声称刚完成未经记录的活动。event 依据给定事件。'
+                'new_activity 的 publish=false，交给生活状态机。'
+                '港区公开用 port；只有确实想限制读者才用 selected，并从 audienceOptions 选择编号。intent.targetId 是关注对象，不是发布受众。',
         },PostDraft,background=True,revision=revision)
         if self.runtime.background_blocked(revision):return 'wait'
         if draft.kind=='new_activity':
+            if draft.publish:raise ValueError('新生活活动不能同时发布为已发生的动态。')
             if event or not draft.activityKind:return 'wait'
             self.runtime.life.start(actor_id,{'action':draft.activityKind,
                 'purpose':decision['intent']['purpose'],'targetId':draft.targetId},decision['id'])
             return 'activity'
+        if not draft.publish:return 'wait'
         if bool(event)!=(draft.kind=='event'):raise ValueError('动态与活动来源不一致。')
         body=draft.body.strip()
         if not body:return 'wait'
@@ -359,24 +377,31 @@ class MomentsRuntime:
         self.notify_post(post_id)
         return 'post'
 
-    async def _interact(self,actor_id,post_id,key,comment=''):
+    async def _interact(self,actor_id,post_id,key,comment='',comment_author_id=''):
         revision=self.runtime.revision
         with session_scope() as session:
             post=session.get(SocialPost,post_id)
             if not post or not self.service.post_visible(session,post,actor_id):return 'wait'
             publication=session.get(SocialPublication,post_id)
             body=publication.data['body'] if publication else ''
+            author=session.get(Actor,post.author_id)
+            post_author={'id':post.author_id,'name':author.name if author else post.author_id}
+            commenter=session.get(Actor,comment_author_id) if comment_author_id else None
+            comment_author={'id':comment_author_id,'name':commenter.name if commenter else comment_author_id}
         decision=await self.runtime.think(actor_id,'moments-reaction:'+key+':'+actor_id,
             '决定是否回应可见动态。action=speak 表示评论；accept 表示点赞；wait 表示不互动。'
-            +'动态：'+body[:900]+('；用户评论：'+comment[:500] if comment else ''),
+            +'动态作者：'+post_author['name']+'；动态：'+body[:900]
+            +('；评论作者：'+(comment_author['name'] or '未标明')+'；评论：'+comment[:500] if comment else ''),
             mode='moments',background=True,actions=['speak','accept','wait'],include_task_memory=False)
         action=decision['intent']['action']
         if action=='wait':return 'wait'
         text=''
         if action=='speak':
             profile=self.runtime.profile(actor_id)
+            from backend.characters.dialogue_persona import personality_for_dialogue, public_dialogue_intent
             draft=await self.runtime.call(actor_id,'moments_comment',{
-                'profile':profile['interpretation'],'intent':decision['intent'],
+                'actorId':actor_id,'postAuthor':post_author,'commentAuthor':comment_author if comment else None,
+                'profile':personality_for_dialogue(profile['interpretation']),'intent':public_dialogue_intent(decision['intent']),
                 'post':body[:900],'comment':comment[:500],
                 'rule':'只根据可见动态发表自然短评论；不假称自己亲历作者的活动，不重复套话。',
             },CommentDraft,background=True,revision=revision)

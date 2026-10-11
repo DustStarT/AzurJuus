@@ -39,8 +39,9 @@ def install_terminal_api(app, coordinator):
     async def preview(actor_id: str):
         try:
             value = cards.inspect(actor_id)
-            return {'version':value['version'], 'terminal':cards.TERMINAL, 'character':value['text'],
+            return {'version':value['version'], 'terminal':cards.TERMINAL, 'character':cards.context(actor_id)[0],
+                'sourceCharacter':value['text'],
                 'world':cards.lore('', (value.get('latest') or {}).get('name', '')),
-                'note':'预览不包含密钥或其他人物私人状态；实际请求还包含本次可见经历和对话。'}
+                'note':'character 为当前运行时人物背景与表达规则，sourceCharacter 为保留的原始角色资料；认知开启时还附加人格表达字段。实际请求另含当前可见经历、时间和对话，不包含其他人物私人状态。'}
         except ValueError as exc:
             raise HTTPException(404, str(exc))

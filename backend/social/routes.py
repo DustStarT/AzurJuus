@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from fastapi import HTTPException
 from backend.database import session_scope
+from backend.api.input_contracts import checked, PostInput
 
 
 def install_moment_routes(app, service, publish):
@@ -20,6 +21,7 @@ def install_moment_routes(app, service, publish):
 
     @app.post("/api/posts/like")
     async def api_post_like(payload: dict[str, Any]):
+        payload = checked(payload, PostInput)
         try:
             with session_scope() as session:
                 snapshot = service.toggle_post_like(session, str(payload.get("postId") or ""))
@@ -32,6 +34,7 @@ def install_moment_routes(app, service, publish):
 
     @app.post("/api/posts/comment")
     async def api_post_comment(payload: dict[str, Any]):
+        payload = checked(payload, PostInput)
         try:
             with session_scope() as session:
                 snapshot = service.add_comment(
@@ -48,6 +51,7 @@ def install_moment_routes(app, service, publish):
 
     @app.post("/api/posts/publish")
     async def api_post_publish(payload: dict[str, Any]):
+        payload = checked(payload, PostInput)
         try:
             with session_scope() as session:
                 snapshot = service.publish_post(

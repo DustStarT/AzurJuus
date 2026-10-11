@@ -279,8 +279,9 @@ class LifeRuntime:
         source=key(activity['id'],actor_id,len(activity.get('dialogue',[])))
         revision=self.r.revision
         profile=self.r.profile(actor_id)
-        value=await self.r.call(actor_id,'express',{'profile':profile['interpretation'],
-            'intent':decision['intent'],'history':activity.get('dialogue',[]),
+        from backend.characters.dialogue_persona import personality_for_dialogue, public_dialogue_intent
+        value=await self.r.call(actor_id,'express',{'profile':personality_for_dialogue(profile['interpretation']),
+            'intent':public_dialogue_intent(decision['intent']),'history':activity.get('dialogue',[]),
             'sourceId':source,'scene':'参与者通过港区终端交流，不替他人说话或行动。'},background=True,revision=revision)
         segments=validate(value,source)
         if self.r.background_blocked(revision):raise MindInterrupted('共同交流已被打断。')
@@ -345,7 +346,8 @@ class LifeRuntime:
         intent=(('这是和频道同伴的自主群聊；用户只是可读成员，本轮没有向你提问。'
             '围绕自己的近况或想法与同伴交流，不请示、催促或等待用户回复。') if kind=='group' else
             '这是给用户的私聊；有相关内容才分享自己的近况，或简短关心对方，不催促回复。')
-        value=await self.r.call(actor_id,'express',{'profile':profile['interpretation'],
+        from backend.characters.dialogue_persona import personality_for_dialogue
+        value=await self.r.call(actor_id,'express',{'profile':personality_for_dialogue(profile['interpretation']),
             'intent':intent,'audience':audience,
             'facts':events,'sourceId':source},background=True,revision=revision)
         segments=validate(value,source)

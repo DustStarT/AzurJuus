@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, watch, onMounted, onUnmounted, inject } from 'vue';
 import { api } from '../../shared/api';
+import { kernelRuntimeKey } from '../../shared/kernel-runtime';
 import CharacterCard from '../characters/CharacterCard.vue';
 import PersonalLife from './PersonalLife.vue';
-const view = ref('state');
+// The panel is opened from the "经历与关系" method tab. Start with the
+// durable experience feed so the entry point immediately shows its purpose;
+// the other views remain available in the tab row.
+const view = ref('experiences');
 const views = [{id:'background',label:'背景'},{id:'state',label:'当前状态'},{id:'goals',label:'目标'},{id:'experiences',label:'经历'},{id:'relationships',label:'关系判断'}];
 const props = defineProps<{actorId:string}>();
+const kernel = inject(kernelRuntimeKey);
 type Source = {text:string;sourceId:string};
 type Mind = {version:number;enabled:boolean;data:{focus:Source[];commitments:Source[];mood:string;emotion?:{name:string;target:string;cause:string};mindMood?:{text:string}};anchor:{note:string};originalBackground?:{text:string;source:string;quote:string;sourceKind:string}[];error?:string};
 type Experience = {id:string;text:string;sourceSeq:number;kind:string;speakerName?:string|null;data:{speakerId?:string;ownSpeech?:boolean;userCorrection?:string}};
@@ -14,7 +19,7 @@ const experiences = ref<Experience[]>([]);
 const relations = ref<{peerId:string;name:string;summary:string;userDefined?:string;background?:unknown[];sharedSources?:unknown[];defaultRelationship?:{familiarity:string}}[]>([]);
 const relationshipEdit = ref(''), relationshipText = ref('');
 const cursor = ref<number|null>(null), error = ref(''), editing = ref(''), correction = ref('');
-let active = true, generation = 0, timer = 0;
+let active = true, generation = 0, timer = 0, unsubscribeDomain: (() => void) | undefined;
 async function load() {
   const request = ++generation;
   try {
@@ -24,7 +29,9 @@ async function load() {
       api<{relationships:typeof relations.value}>(`/api/actors/${props.actorId}/relationships`)]);
     if (!active || request !== generation || (mind.value && state.version < mind.value.version)) return;
     mind.value = state; experiences.value = events.experiences; cursor.value = events.nextCursor;
-    relations.value = peers.relationships.filter(peer => peer.userDefined || peer.background?.length || peer.sharedSources?.length || peer.defaultRelationship?.familiarity === 'familiar');
+    // Keep candidate peers visible so the relationship tab can establish a
+    // first user-defined relationship instead of hiding every blank entry.
+    relations.value = peers.relationships;
   } catch(e) { error.value = (e as Error).message; }
 }
 async function action(path:string, body:unknown = {}) {
@@ -50,8 +57,24 @@ function changed(event:Event) {
   if ((event as CustomEvent).detail?.actorId !== props.actorId) return;
   clearTimeout(timer); timer = window.setTimeout(load, 200);
 }
-onMounted(() => { load(); window.addEventListener('azur-mind-changed', changed); });
-onUnmounted(() => { active = false; clearTimeout(timer); window.removeEventListener('azur-mind-changed', changed); });
+onMounted(() => {
+  load();
+  window.addEventListener('azur-mind-changed', changed);
+  unsubscribeDomain = kernel?.subscribeDomain(signal => {
+    if (signal.kind === 'mind' && signal.actorId === props.actorId) {
+      clearTimeout(timer); timer = window.setTimeout(load, 200);
+    }
+  });
+});
+watch(view, (next) => {
+  // Tabs can be opened immediately after an observation is written. Reloading
+  // on entry makes the tab authoritative even when the websocket notification
+  // was consumed before this panel became visible.
+  if (next === 'experiences' || next === 'relationships') {
+    void load();
+  }
+});
+onUnmounted(() => { active = false; clearTimeout(timer); unsubscribeDomain?.(); window.removeEventListener('azur-mind-changed', changed); });
 </script>
 <template>
   <section aria-label="人物经历与关系">
@@ -77,7 +100,7 @@ onUnmounted(() => { active = false; clearTimeout(timer); window.removeEventListe
       <p>{{item.text}}</p><details><summary>查看原文依据</summary><blockquote>{{item.quote}}</blockquote><a :href="item.source" target="_blank" rel="noreferrer">打开资料</a></details>
     </article>
     <p v-if="!mind?.originalBackground?.length" class="muted">尚无已核对的背景整理。</p>
-    </template><template v-if="view==='relationships'">
+    </template><template v-if="view==='relationships' || view==='experiences'">
     <h3>关系与共同经历</h3>
     <p class="muted">这里记录的是她对同伴的认识，双方不必相同。你可以设定既有关系；设定不会伪装成真实任务经历。</p>
     <article v-for="peer in relations" :key="peer.peerId" class="assignment">

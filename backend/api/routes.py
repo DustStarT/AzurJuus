@@ -7,6 +7,7 @@ from backend.database import session_scope
 from backend.models import ModelConnection
 from backend.platform.constants import DEFAULT_SETTINGS
 from backend.social.routes import install_moment_routes
+from backend.api.input_contracts import checked, ComposeInput, ModelCheckInput
 
 
 def install_app_routes(app, service, settings, publish, maintenance_lock, runtime_context):
@@ -79,6 +80,7 @@ def install_app_routes(app, service, settings, publish, maintenance_lock, runtim
 
     @app.post('/api/model/check')
     async def api_check_model(payload:dict):
+        payload = checked(payload, ModelCheckInput)
         from backend.credentials import reveal
         from backend.tasks.model_connections import connection_id, normalize, probe
         with session_scope() as session:
@@ -110,6 +112,9 @@ def install_app_routes(app, service, settings, publish, maintenance_lock, runtim
     async def api_open_conversation(payload: dict[str, Any]):
         conversation_id = str(payload.get("conversationId") or "")
         with session_scope() as session:
+            from backend.models import Conversation
+            if session.get(Conversation, conversation_id) is None:
+                raise HTTPException(404, '会话不存在。')
             snapshot = service.open_conversation(session, conversation_id)
         await publish("conversation.message.updated", {"conversationId": conversation_id, "snapshot": snapshot})
         return {"status": "ok", "snapshot": snapshot}
@@ -143,6 +148,7 @@ def install_app_routes(app, service, settings, publish, maintenance_lock, runtim
 
     @app.post("/api/personas/compose")
     async def api_personas_compose(payload: dict[str, Any]):
+        payload = checked(payload, ComposeInput)
         try:
             with session_scope() as session:
                 result = service.compose_personas(

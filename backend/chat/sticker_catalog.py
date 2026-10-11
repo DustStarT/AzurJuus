@@ -27,7 +27,7 @@ def expression_catalog(name=''):
     selected=sorted(items,key=lambda item: name not in item['label'])[:24]
     labels=[item['label'] for item in selected]
     return ('\n可用表情包标签：'+json.dumps(labels,ensure_ascii=False)+
-        '。情绪合适时可以自愿选一张，不必每次使用。在 JSON 的 sticker 字段填写一个标签（不使用时为 null），程序会显示为独立表情气泡；也可直接写成独立 segments 项 [表情:标签]。最多一张，不要编造标签。任务结论仍须用文字说清。')
+        '。情绪合适时可以自愿选一张，不必每次使用。在 JSON 的 sticker 字段填写一个标签（不使用时为 null），程序会显示为独立表情气泡；也可直接写成独立 segments 项 [表情:标签]。最多一张，不要编造标签。')
 
 
 def cache_dir():

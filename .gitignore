@@ -12,8 +12,7 @@ __pycache__/
 *.pyc
 .pytest-tmp/
 
-# 本地说明文档与验收产物：仅本地保留，不纳入版本控制
-docs/
+# 验收生成产物留在本地；源码测试与文档随项目交付。
 validation/
 
-tests/
+docs/

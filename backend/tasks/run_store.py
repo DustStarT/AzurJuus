@@ -94,6 +94,21 @@ class RunStore:
             runs = [json.loads(r[0]) for r in db.execute("SELECT data FROM runs WHERE deleted_at IS NULL ORDER BY updated DESC LIMIT 200")]
             return {"runs": runs, "cursor": cursor}
 
+    def inspect(self, run_id):
+        """Read task, calls and event watermark from one SQLite snapshot."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            cursor = db.execute("SELECT COALESCE(MAX(seq),0) FROM events").fetchone()[0]
+            row = db.execute("SELECT data FROM runs WHERE id=? AND deleted_at IS NULL", (run_id,)).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            calls = [
+                {**dict(call), "args": json.loads(call["args"]),
+                 "result": json.loads(call["result"]) if call["result"] else None}
+                for call in db.execute("SELECT * FROM calls WHERE run_id=? ORDER BY updated", (run_id,))
+            ]
+            return {"run": json.loads(row[0]), "calls": calls, "cursor": cursor}
+
     def update(self, run_id: str, **patch):
         with self.connect() as db:
             run = self.get(run_id)
@@ -160,7 +175,7 @@ class RunStore:
         for run in pending:
             if run["status"] not in TERMINAL:
                 for call in self.calls(run["id"]):
-                    if call["status"] in {"waiting_approval", "approved"}:
+                    if call["status"] in {"waiting_secretary", "waiting_approval", "approved"}:
                         self.put_call(call["id"], run["id"], call["name"], call["args"], "expired", {"error": "审批会话已结束；操作未执行，需要执行者重新提交。"})
                 uncertain = [c["id"] for c in self.calls(run["id"]) if c["status"] == "running"]
                 discussions = run.get("discussions", [])

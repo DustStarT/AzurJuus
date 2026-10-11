@@ -13,18 +13,22 @@ from pathlib import Path
 
 from backend.tasks.capabilities import CATALOG, LocalCapabilities, phase_actions
 from backend.credentials import redact
-from backend.tasks.hermes_bridge import HermesBridge
+from backend.tasks.deepseek_bridge import DeepSeekHarnessBridge
 from backend.tasks.run_store import RunStore, TERMINAL
 from backend.characters.personality import expression_rules
 from backend.tasks.collaboration_dialogue import CollaborationDialogue
+from backend.tasks.task_reviews import ReviewRejected
 
 
 class RunPaused(RuntimeError):
     pass
 
 
+METHOD_ACTIONS={'method_search','method_select','method_evolve'}
+
+
 class RunCoordinator:
-    def __init__(self, store: RunStore, settings_loader, finish_callback, endpoint, bridge_factory=HermesBridge):
+    def __init__(self, store: RunStore, settings_loader, finish_callback, endpoint, bridge_factory=DeepSeekHarnessBridge):
         self.store, self.settings_loader, self.finish_callback = store, settings_loader, finish_callback
         self.endpoint = endpoint
         self.bridge_factory = bridge_factory
@@ -44,6 +48,12 @@ class RunCoordinator:
         self.interaction_gate = asyncio.Semaphore(1)
         self.submission_only = set()
         self.dialogue = CollaborationDialogue(self)
+        self.plan_changes = {}
+        from backend.tasks.workflow_plans import WorkflowPlans
+        self.workflow = WorkflowPlans(self)
+        from backend.tasks.task_reviews import TaskReviews
+        self.reviews = TaskReviews(self)
+        self.method_runtime = None
 
     def launch(self, run_id):
         try:
@@ -61,6 +71,9 @@ class RunCoordinator:
             def forget(finished):
                 if self.tasks.get(run_id) is finished:
                     self.tasks.pop(run_id, None)
+                    # A terminal run event can precede final speech/publication.
+                    # Notify empty feeds after the actual foreground slot exits.
+                    self.store.event(None,'workspace.changed',{'event':'foreground.finished','runId':run_id})
                 if not self.shutting_down and getattr(self, 'social_engine', None):
                     try:
                         run = self.store.get(run_id)
@@ -86,7 +99,23 @@ class RunCoordinator:
                 busy.add(run['actorId'])
         return busy
 
+    def foreground_activity(self):
+        """Describe live foreground jobs without calling all asyncio tasks work."""
+        activity=None
+        for run_id,job in list(self.tasks.items()):
+            done=getattr(job,'done',None)
+            if callable(done) and done():continue
+            try:run=self.store.get(run_id)
+            except KeyError:
+                activity='other'
+                continue
+            if run.get('mode')!='chat':return 'task'
+            if activity is None:activity='chat'
+        return activity
+
     async def start(self):
+        if getattr(self, 'governance', None):
+            self.governance.recover()
         if getattr(self, 'moments', None):
             self.moments.initialize(restart=True)
         if getattr(self, 'growth', None):
@@ -186,8 +215,9 @@ class RunCoordinator:
             await self.dialogue.drain(run_id)
             run = self.store.get(run_id)
             reports = [{"id": a["id"], "result": a.get("result")} for a in run["assignments"]]
+            reviewer_actor=self.reviews.secretary() if self.reviews.enabled else run['actors'][0]
             # A separate read-only pass checks evidence, not the workers' role-play summaries.
-            await self.execute_actor(run, run["actors"][0], "reviewer", "原始用户要求及约束：" + run["prompt"] + "\n检查以下子任务交付。你是只读审查者，只按原始要求验收，不新增执行命令等验收条件。请读取实际产物并核验成功工具记录；read_file 已返回实际字节数和 SHA256，无需重复运行命令计算这些元数据。发现真实交付缺陷在 deliver.unresolved 中逐项列出；工具范围限制不是交付缺陷。通过时调用 deliver，artifacts 必须是路径字符串数组（不要复制产物元数据对象），checks 引用自己本阶段的成功读取调用的外层 callId，不引用 execution_history。\n" + json.dumps(reports, ensure_ascii=False), settings)
+            await self.execute_actor(run, reviewer_actor, "reviewer", "原始用户要求及约束：" + run["prompt"] + "\n检查以下子任务交付。你是只读审查者，只按原始要求验收，不新增执行命令等验收条件。请读取实际产物并核验成功工具记录；read_file 已返回实际字节数和 SHA256，无需重复运行命令计算这些元数据。发现真实交付缺陷在 deliver.unresolved 中逐项列出；工具范围限制不是交付缺陷。通过时调用 deliver，artifacts 必须是路径字符串数组（不要复制产物元数据对象），checks 引用自己本阶段的成功读取调用的外层 callId，不引用 execution_history。\n" + json.dumps(reports, ensure_ascii=False), settings)
             run = self.store.get(run_id)
             result = run.get("reviewResult")
             if not result:
@@ -210,6 +240,10 @@ class RunCoordinator:
             answers = [(a.get('result') or {}).get('summary', '') for a in run['assignments']]
             answer = '\n\n'.join(s for s in answers if s.strip())
             result = {**result, 'summary': answer or result['summary'], 'reviewSummary': result['summary']}
+            if self.reviews.enabled:
+                await self.reviews.checkpoint(run_id,'final','最终交付确认',
+                    {'request':run['prompt'],'result':result,'artifacts':result.get('artifacts',[])},
+                    already_reviewed={'actorId':reviewer_actor['id'],'approved':True,'reason':result['reviewSummary'],'at':time.time()})
             self.store.update(run_id, status="completed", assignments=run["assignments"], result=result, artifacts=result.get("artifacts", []))
             self.store.remember(run_id, run["actorId"], result["summary"])
             await self.finish_callback(run_id, result["summary"])
@@ -220,7 +254,7 @@ class RunCoordinator:
         except Exception as exc:
             errors = list(exc.exceptions) if isinstance(exc, BaseExceptionGroup) else [exc]
             if self.store.get(run_id)["status"] not in {"cancelled", "paused"}:
-                self.store.update(run_id, status="paused" if any(isinstance(e, RunPaused) for e in errors) else "failed", error="; ".join(str(e) for e in errors))
+                self.store.update(run_id, status="paused" if any(isinstance(e, (RunPaused,ReviewRejected)) for e in errors) else "failed", error="; ".join(str(e) for e in errors))
         finally:
             if self.regression_callback:
                 with contextlib.suppress(Exception):
@@ -287,26 +321,61 @@ class RunCoordinator:
             if a["id"] == aid:
                 a.update(patch)
         self.store.update(run_id, assignments=run["assignments"])
+        self.notify_plan(run_id)
+
+    def notify_plan(self, run_id):
+        signal = self.plan_changes.get(run_id)
+        if signal:
+            loop, event = signal
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(event.set)
 
     async def execute_assignments(self, run_id, settings):
         active = {}
+        changed = asyncio.Event()
+        self.plan_changes[run_id] = (asyncio.get_running_loop(), changed)
         try:
             while True:
+                changed.clear()
+                if self.reviews.enabled:
+                    current=self.store.get(run_id)
+                    plan=self.reviews.plan(current)
+                    from backend.tasks.task_reviews import ReviewRejected
+                    try:
+                        await self.reviews.checkpoint(run_id,'plan','执行计划确认',self.reviews.plan_material(current))
+                    except ReviewRejected as exc:
+                        if plan!=self.reviews.plan(self.store.get(run_id)):
+                            continue
+                        raise RunPaused('执行计划未通过审核：'+str(exc)) from exc
+                    if plan!=self.reviews.plan(self.store.get(run_id)):
+                        continue
                 assignments = self.store.get(run_id)["assignments"]
-                completed = {a["id"] for a in assignments if a["status"] in {"completed", "submitted"} and a["id"] not in active}
+                completed = {a["id"] for a in assignments if a["status"] in ({'completed'} if self.reviews.enabled else {'completed','submitted'}) and a["id"] not in active}
                 if len(completed) == len(assignments):
                     return
-                ready = [a for a in assignments if a["id"] not in active and a["status"] in {"pending", "running", "needs_revision"} and set(a["dependsOn"]) <= completed]
-                for assignment in ready[:max(0, 2 - len(active))]:
+                ready = [a for a in assignments if a["id"] not in active and a["status"] in ({'pending','running','needs_revision','submitted'} if self.reviews.enabled else {'pending','running','needs_revision'}) and set(a["dependsOn"]) <= completed]
+                occupied = {a['actorId'] for a in assignments if a['id'] in active}
+                for assignment in ready:
+                    if len(active) >= 2:
+                        break
+                    if assignment['actorId'] in occupied:
+                        continue
                     active[assignment["id"]] = asyncio.create_task(self.assignment(run_id, assignment["id"], settings))
+                    occupied.add(assignment['actorId'])
                 if not active:
                     raise RuntimeError("任务依赖无法推进，请检查失败或待处理的子任务。")
-                done, _ = await asyncio.wait(active.values(), return_when=asyncio.FIRST_COMPLETED)
+                watcher = asyncio.create_task(changed.wait())
+                try:
+                    done, _ = await asyncio.wait([*active.values(), watcher], return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    watcher.cancel()
+                    await asyncio.gather(watcher, return_exceptions=True)
                 for aid, task in list(active.items()):
                     if task in done:
                         del active[aid]
                         task.result()
         finally:
+            self.plan_changes.pop(run_id, None)
             for task in active.values():
                 task.cancel()
             if active:
@@ -315,16 +384,40 @@ class RunCoordinator:
     async def assignment(self, run_id, aid, settings):
         run = self.store.get(run_id)
         assignment = next(a for a in run["assignments"] if a["id"] == aid)
+        if self.reviews.enabled:
+            for upstream in run['assignments']:
+                if upstream['id'] not in assignment['dependsOn']:continue
+                try:self.reviews.artifacts_unchanged(run,(upstream.get('result') or {}).get('artifacts',[]))
+                except ValueError as exc:
+                    self.patch_assignment(run_id,upstream['id'],status='needs_revision',revisionNotes=[str(exc)])
+                    raise RunPaused('上游产物已改变，需要重新交付和复核。') from exc
         actor = next(a for a in run["actors"] if a["id"] == assignment["actorId"])
-        self.patch_assignment(run_id, aid, status="running")
+        if assignment.get('status')!='submitted':
+            self.patch_assignment(run_id, aid, status="running")
         inputs = [a.get("result") for a in run["assignments"] if a["id"] in assignment["dependsOn"]]
         prompt = "总目标：" + run["prompt"] + "\n负责：" + assignment["brief"] + "\n验收：" + json.dumps(assignment["acceptance"], ensure_ascii=False) + "\n上游成果：" + json.dumps(inputs, ensure_ascii=False)
         if assignment.get("revisionNotes"):
             prompt += "\n必须修订的问题：" + json.dumps(assignment["revisionNotes"], ensure_ascii=False)
-        await self.execute_actor(run, actor, aid, prompt, settings)
+        if assignment.get('status')!='submitted':
+            await self.execute_actor(run, actor, aid, prompt, settings)
         current = next(a for a in self.store.get(run_id)["assignments"] if a["id"] == aid)
         if current["status"] not in {"completed", "submitted"}:
             raise RuntimeError(f"{actor['name']} 未提交通过核验的成果；不会将进度回复标记为完成。")
+        if self.reviews.enabled:
+            from backend.tasks.task_reviews import ReviewRejected
+            if current['result'].get('unresolved'):
+                self.patch_assignment(run_id,aid,status='needs_revision',revisionNotes=current['result']['unresolved'])
+                raise RunPaused('阶段仍有未解决事项，需要修订后继续。')
+            try:material=await self.reviews.stage_material(run_id,current)
+            except ValueError as exc:
+                self.patch_assignment(run_id,aid,status='needs_revision',revisionNotes=[str(exc)])
+                raise RunPaused('产物变化，需要重新交付：'+str(exc)) from exc
+            try:
+                await self.reviews.checkpoint(run_id,'stage:'+aid,actor['name']+' · '+current['brief'],material)
+            except ReviewRejected as exc:
+                self.patch_assignment(run_id,aid,status='needs_revision',revisionNotes=[str(exc)])
+                raise RunPaused('阶段审核要求修订：'+str(exc)) from exc
+            self.patch_assignment(run_id,aid,status='completed')
 
     async def execute_actor(self, run, actor, phase, prompt, settings):
         run_id = run["id"]
@@ -355,6 +448,17 @@ class RunCoordinator:
                     stages = self.store.get(run_id).get("runtimeStages", {})
                     stages[phase] = {**payload, "actorId": actor["id"], "at": time.time()}
                     self.store.update(run_id, runtimeStages=stages)
+                elif kind == 'runtime.native':
+                    self.store.event(run_id, kind, {**redact(payload), 'actorId': actor['id'], 'assignmentId': phase})
+                elif kind == 'runtime.steering':
+                    checkpoint = self.store.get(run_id)
+                    for item in checkpoint['steering']:
+                        if item.get('id') == payload.get('instructionId'):
+                            if phase not in item.setdefault('consumedBy', []):
+                                item['consumedBy'].append(phase)
+                            item['delivered'] = True
+                    self.store.update(run_id, steering=checkpoint['steering'])
+                    self.store.event(run_id, kind, {**payload, 'actorId': actor['id'], 'assignmentId': phase})
                 elif kind in {"message.start", "message.delta", "message.complete"}:
                     envelope = {**redact(payload), "actorId": actor["id"], "assignmentId": phase, "messageId": message_id}
                     if self.expression and self.expression.enabled:
@@ -366,9 +470,11 @@ class RunCoordinator:
                 elif kind in {"approval.request", "clarify.request"}:
                     self.store.event(run_id, "runtime.question", {**redact(payload), "actorId": actor["id"], "assignmentId": phase})
             bridge_settings = {**settings, "_allowedActions": [name for name in phase_actions(phase)
-                if name in run.get('allowedActions', phase_actions(phase))]}
+                if name in run.get('allowedActions', phase_actions(phase))
+                and (name != 'replan' or actor['id'] == run['actorId'])]}
             bridge_settings['_inputImages']=[a['path'] for a in run.get('attachments',[]) if a['mime'].startswith('image/')] if run.get('visionEnabled') and phase not in {'planner','chat'} and not phase.startswith('discussion_') else []
             bridge_settings['visionEnabled']=run.get('visionEnabled',False)
+            bridge_settings['_workspace'] = run['workspace']
             if getattr(self,'background_mind',None) and self.background_mind.enabled:
                 from urllib.parse import urlsplit
                 endpoint=urlsplit(self.endpoint)
@@ -400,7 +506,7 @@ class RunCoordinator:
             from backend.platform.local_clock import snapshot as current_time
             policy+='\n本机当前时间（不代表剧情时间）：'+json.dumps(current_time(),ensure_ascii=False)
             bridge_settings['_characterPolicy'] = policy
-            bridge = self.bridge_factory(self.store.path.parent / "hermes" / run_id / phase, bridge_settings, self.endpoint, token, on_event)
+            bridge = self.bridge_factory(self.store.path.parent / "deepseek-harness" / run_id / phase, bridge_settings, self.endpoint, token, on_event)
             self.bridges[key] = bridge
             context = self.store.recall(run["prompt"], actor["id"])
             if decision:
@@ -426,6 +532,8 @@ class RunCoordinator:
             if run.get("collaborative"):
                 member_ids = {run["actorId"], *(a["actorId"] for a in run["assignments"])}
                 history.append({"role":"user", "content":"当前任务成员（discuss 使用 id）：" + json.dumps([{"id":a["id"], "name":a["name"]} for a in run["actors"] if a["id"] in member_ids], ensure_ascii=False)})
+                history.append({'role':'user', 'content':'外援只能从当前连接成员申请；需用户批准才能加入：' +
+                    json.dumps(settings.get('connectedAgentIds', []), ensure_ascii=False)})
             try:
                 if self.method_loader:
                     method = self.method_loader(run_id, actor["id"], phase)
@@ -453,7 +561,7 @@ class RunCoordinator:
                         if phase == "chat" or discussion or delivered:
                             break
                         if phase not in {"planner", "reviewer"} and not any(
-                            c.get("phase") == phase and c["status"] == "completed" and c["name"] not in {"deliver", "execution_history"}
+                            c.get("phase") == phase and c["status"] == "completed" and c["name"] not in {"deliver", "execution_history",*METHOD_ACTIONS}
                             for c in self.store.calls(run_id)
                         ):
                             break
@@ -488,6 +596,8 @@ class RunCoordinator:
         if run["status"] not in {"running", "waiting_approval"}:
             raise PermissionError("任务当前没有执行权限。")
         name, args = payload.get("name"), payload.get("args", {})
+        if not isinstance(name, str):
+            raise ValueError('工具名称必须是文字。')
         if name not in run.get('allowedActions', CATALOG):
             raise PermissionError('隔离试用不允许此能力。')
         call_id = str(payload.get("callId", ""))
@@ -504,11 +614,23 @@ class RunCoordinator:
             raise PermissionError("补交阶段只允许只读核验和 deliver，不能重复有副作用的操作。")
         if name == "delegate" and phase != "planner":
             raise PermissionError("只有秘书规划阶段可以提交分工。")
+        if name == 'replan' and actor_id != run['actorId']:
+            raise PermissionError('只有本任务秘书可以修订分工；其他成员可以申请外援。')
         self.tool_tasks[call_id] = (run_id, asyncio.current_task())
         try:
-            reason = self.tools.approval_reason(run, name, args)
+            if self.method_runtime and name not in {'method_search','method_select','method_evolve'}:
+                self.method_runtime.validate_selection(run_id,actor_id,phase)
+            reason = self.tools.approval_reason({**run,'reviewPolicy':self.reviews.enabled}, name, args)
             if reason:
-                self.store.put_call(call_id, run_id, name, args, "waiting_approval", {"reason": reason}, phase=phase)
+                material={'reason':reason}
+                if self.reviews.enabled:
+                    self.store.put_call(call_id,run_id,name,args,'waiting_secretary',material,phase=phase)
+                    verdict=await self.reviews.risk(run,actor_id,name,args,reason)
+                    material['secretaryReview']=verdict
+                    if not verdict['approved']:
+                        self.store.put_call(call_id,run_id,name,args,'rejected',material,'secretary_rejected',phase=phase)
+                        return {'status':'failed','callId':call_id,'result':{'error':'秘书拒绝操作：'+verdict['reason']}}
+                self.store.put_call(call_id, run_id, name, args, "waiting_approval", material, phase=phase)
                 self.store.update(run_id, status="waiting_approval")
                 event = self.approvals.setdefault(call_id, asyncio.Event())
                 if self.expression and self.expression.enabled and not run.get('approvalNoticeSent'):
@@ -517,14 +639,41 @@ class RunCoordinator:
                     await self.expression.speak(run,actor,'approval_notice','简短解释这类操作为什么需要确认。审批状态以工作记录为准，不要求用户再次确认，不声称仍在等待或已经完成。',
                         {'reason':reason,'operation':name},source=run_id+':approval-notice',
                         audience={'kind':'team' if run.get('collaborative') else 'dm','name':'指挥官'})
-                await event.wait()
+                # An approval must not pin a model session until the whole
+                # task timeout.  Expiring the pending call lets the model
+                # recover (or lets the run pause cleanly) while preserving the
+                # approval record for a later explicit decision.
+                approval_timeout = max(5.0, float(run.get('approvalTimeoutSeconds', 120)))
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=approval_timeout)
+                except asyncio.TimeoutError:
+                    self.store.put_call(call_id, run_id, name, args, "expired",
+                        {"error": "审批等待超时，操作未执行。"}, phase=phase)
+                    self.store.update(run_id, status="running")
+                    return {"status": "failed", "callId": call_id,
+                            "result": {"error": "审批等待超时，操作未执行；请改用无需审批的能力。"}}
                 approved = self.store.call(call_id)
                 if approved["approval"] != "approved":
                     return {"status": "failed", "callId": call_id, "result": {"error": "用户拒绝了操作，请调整方案。"}}
                 run = self.store.get(run_id)
+                if self.reviews.enabled and material['secretaryReview']['fingerprint']!=self.reviews.operation_state(run,name,args):
+                    raise ValueError('审批期间操作目标已改变，必须重新申请双重审批。')
             self.store.put_call(call_id, run_id, name, args, "running", phase=phase)
             if name == "delegate":
                 result = self.plan(run_id, args)
+            elif name=='method_search':
+                if not self.method_runtime:raise ValueError('方法服务不可用。')
+                result=self.method_runtime.search(run_id,actor_id,phase,args)
+            elif name=='method_select':
+                if not self.method_runtime:raise ValueError('方法服务不可用。')
+                result=self.method_runtime.select(run_id,actor_id,phase,args)
+            elif name=='method_evolve':
+                result=await self.growth.propose(actor_id,args)
+            elif name == 'replan':
+                result = self.replan(run_id, args.get('tasks'))
+            elif name == 'request_help':
+                result = self.request_help(run_id, requester_id=actor_id, assignment_id=phase,
+                    brief=args.get('brief', ''), reason=args.get('reason', ''), candidate_ids=args.get('candidateIds'))
             elif name == "discuss":
                 result = await self.dialogue.send(run_id, actor_id, args)
             elif name == "deliver":
@@ -554,7 +703,7 @@ class RunCoordinator:
                 stored_result = {k:v for k,v in result.items() if k != "image"}
                 stored_result["imageRef"] = call_id
             self.store.put_call(call_id, run_id, name, args, status, stored_result)
-            if (status=='completed' and name not in {'delegate','deliver','discuss','execution_history'}
+            if (status=='completed' and name not in {'delegate','deliver','discuss','execution_history','request_help','replan',*METHOD_ACTIONS}
                     and phase not in {'planner','reviewer','chat'} and not phase.startswith('discussion_')
                     and self.expression and self.expression.enabled):
                 current_progress=self.store.get(run_id)
@@ -570,6 +719,11 @@ class RunCoordinator:
                         latest=self.store.get(run_id)
                         self.store.update(run_id,progressByPhase={**latest.get('progressByPhase',{}),notice_key:True})
             current = self.store.get(run_id)
+            helper_results = [{'requestId': request['id'], 'actorId': request.get('actorId'), 'result': item.get('result')}
+                for request in current.get('helpRequests', []) if request.get('requesterId') == actor_id and request.get('assignmentId') == phase
+                for item in current.get('assignments', []) if item.get('helpRequestId') == request['id'] and item.get('result')]
+            if helper_results and isinstance(result, dict):
+                result = {**result, 'helperResults': helper_results}
             pending = [s for s in current["steering"] if phase not in s.get("consumedBy", [])]
             peer_messages=self.dialogue.take(run_id,actor_id,phase)
             cognitive=None
@@ -591,13 +745,13 @@ class RunCoordinator:
             return {"status": status, "callId": call_id, "result": result, "peerMessages":peer_messages,'cognitiveIntent':cognitive.get('intent',cognitive) if cognitive else None}
         except asyncio.CancelledError:
             current_call = self.store.call(call_id)
-            not_started = not current_call or current_call["status"] in {"waiting_approval", "approved"}
+            not_started = not current_call or current_call["status"] in {"waiting_secretary", "waiting_approval", "approved"}
             self.store.put_call(call_id, run_id, name, args, "expired" if not_started else "uncertain", {"error": "审批已中断，操作未执行。" if not_started else "执行已中断，继续前请核验副作用。"}, phase=phase)
             raise
         except Exception as exc:
             result = {"error": str(exc)}
             self.store.put_call(call_id, run_id, name, args, "failed", result, phase=phase)
-            if name not in {'discuss','deliver','delegate','execution_history'}:
+            if name not in {'discuss','deliver','delegate','execution_history','request_help','replan',*METHOD_ACTIONS}:
                 with contextlib.suppress(Exception):
                     await self.dialogue.notice_failure(run_id, actor_id, phase, call_id, str(exc))
             return {"status": "failed", "callId": call_id, "result": result}
@@ -606,35 +760,16 @@ class RunCoordinator:
             self.approvals.pop(call_id, None)
 
     def plan(self, run_id, args):
-        run = self.store.get(run_id)
-        tasks = args.get("tasks") or []
-        if not 1 <= len(tasks) <= 24:
-            raise ValueError("计划需要 1–24 个具体子任务。")
-        if len({t.get('actorId') for t in tasks}) > run.get('maxTaskMembers',12):
-            raise ValueError('分工超过设置中的任务成员上限。')
-        ids = {t.get("id") for t in tasks}
-        actors = {a["id"] for a in run["actors"]}
-        if len(ids) != len(tasks) or None in ids:
-            raise ValueError("子任务 ID 必须唯一。")
-        if any(not isinstance(i, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", i) or i in {"planner", "reviewer", "chat"} or i.startswith("discussion_") for i in ids):
-            raise ValueError("子任务 ID 只能包含字母、数字、下划线与连字符，且不能使用保留名称。")
-        done = set()
-        for task in tasks:
-            if task.get("actorId") not in actors or not task.get("brief") or not task.get("acceptance") or not set(task.get("dependsOn", [])) <= ids:
-                raise ValueError("分工缺少有效成员、目标、验收条件或依赖。")
-            task["status"] = "pending"
-            task.setdefault("dependsOn", [])
-        while True:
-            ready = {t["id"] for t in tasks if set(t["dependsOn"]) <= done}
-            if ready <= done:
-                break
-            done |= ready
-        if done != ids:
-            raise ValueError("任务依赖存在循环。")
-        self.store.update(run_id, assignments=tasks)
-        if self.plan_callback:
-            self.plan_callback(run_id, tasks)
-        return {"accepted": True, "count": len(tasks)}
+        return self.workflow.plan(run_id, args)
+
+    def replan(self, run_id, tasks):
+        return self.workflow.replan(run_id, tasks)
+
+    def request_help(self, run_id, **request):
+        return self.workflow.request_help(run_id, **request)
+
+    def resolve_help(self, run_id, request_id, **decision):
+        return self.workflow.resolve_help(run_id, request_id, **decision)
 
     def deliver(self, run_id, phase, args):
         run = self.store.get(run_id)
@@ -646,16 +781,16 @@ class RunCoordinator:
             raise ValueError("交付需要实际验证调用 checks，不接受只有文字的完成声明。")
         for check in checks:
             call = calls.get(check.get("callId"))
-            if not call or call["status"] != "completed" or call["name"] in {"deliver", "delegate", "execution_history", "discuss"} or call.get("phase") != phase:
+            if not call or call["status"] != "completed" or call["name"] in {"deliver", "delegate", "execution_history", "discuss", "request_help", "replan",*METHOD_ACTIONS} or call.get("phase") != phase:
                 raise ValueError("验证证据必须指向本任务已成功的实际工具调用。")
         resolutions = args.get("resolvedErrors") or []
         if not args.get("unresolved"):
             for failed in calls.values():
-                if failed.get("phase") != phase or failed["status"] not in {"failed", "rejected"} or failed["name"] in {"deliver", "execution_history", "discuss"}:
+                if failed.get("phase") != phase or failed["status"] not in {"failed", "rejected"} or failed["name"] in {"deliver", "execution_history", "discuss", "request_help", "replan",*METHOD_ACTIONS}:
                     continue
                 resolution = next((r for r in resolutions if r.get("callId") == failed["id"] and r.get("resolution")), None)
                 verification = calls.get(resolution.get("checkCallId")) if resolution else None
-                if not verification or verification["status"] != "completed" or verification.get("phase") != phase or verification["name"] in {"deliver", "delegate", "execution_history"} or verification["updated"] < failed["updated"]:
+                if not verification or verification["status"] != "completed" or verification.get("phase") != phase or verification["name"] in {"deliver", "delegate", "execution_history", "discuss", "request_help", "replan",*METHOD_ACTIONS} or verification["updated"] < failed["updated"]:
                     raise ValueError("请在 resolvedErrors 中说明失败或拒绝操作的修正方案，并引用后续验证调用：" + failed["id"])
         artifacts = []
         for value in args.get("artifacts", []):
@@ -673,7 +808,7 @@ class RunCoordinator:
         if phase == "reviewer":
             self.store.update(run_id, reviewResult=result)
         else:
-            self.patch_assignment(run_id, phase, result=result, status="submitted" if result["unresolved"] else "completed")
+            self.patch_assignment(run_id, phase, result=result, status="submitted" if result["unresolved"] or self.reviews.enabled else "completed")
         return result
 
     async def resolve(self, run_id, call_id, decision):
@@ -684,13 +819,17 @@ class RunCoordinator:
             raise ValueError("审批会话已失效，请继续任务后由执行者重新提交。")
         if decision not in {"approved", "rejected"}:
             raise ValueError("无效审批决定。")
+        if decision=='approved' and self.reviews.enabled:
+            verdict=(call.get('result') or {}).get('secretaryReview',{})
+            if not verdict.get('approved') or verdict.get('actorId')!=self.reviews.secretary()['id']:
+                raise ValueError('操作尚未通过当前秘书复核。')
+            if verdict.get('fingerprint')!=self.reviews.operation_state(self.store.get(run_id),call['name'],call['args']):
+                raise ValueError('操作目标已改变，不能使用旧审批。')
         self.store.put_call(call_id, run_id, call["name"], call["args"], "approved" if decision == "approved" else "rejected", call["result"], decision)
         run = self.store.get(run_id)
-        grants = run.get("grants", [])
-        if decision == "approved" and call["name"] == "command" and "command" not in grants:
-            grants.append("command")
-        others = any(c["status"] == "waiting_approval" for c in self.store.calls(run_id))
-        self.store.update(run_id, grants=grants, status="waiting_approval" if others else "running")
+        others = any(c["status"] in {"waiting_approval","waiting_secretary"} for c in self.store.calls(run_id)) or any(
+            r['status']=='waiting_user' for r in run.get('stageReviews',{}).values())
+        self.store.update(run_id, status="waiting_approval" if others else "running")
         if call_id in self.approvals:
             self.approvals[call_id].set()
 
@@ -716,13 +855,14 @@ class RunCoordinator:
             instruction_id = instruction_id or secrets.token_hex(12)
             steering = run["steering"] + [{"id": instruction_id, "text": text, "at": time.time(), "delivered": False}]
             self.store.update(run_id, steering=steering)
+            self.reviews.invalidate(run_id)
             for key, bridge in list(self.bridges.items()):
                 if key.startswith(run_id + ":") and bridge.session_id:
                     with contextlib.suppress(Exception):
-                        await bridge.steer(text)
+                        receipt = await bridge.steer(text, instruction_id)
                         current = self.store.get(run_id)["steering"]
                         for item in current:
-                            if item.get("id") == instruction_id:
+                            if item.get("id") == instruction_id and receipt.get('queued'):
                                 item["queued"] = True
                         self.store.update(run_id, steering=current)
             return self.store.get(run_id)

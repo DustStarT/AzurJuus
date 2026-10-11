@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from backend.database import session_scope
 from backend.models import Actor, Conversation, ConversationMember, Message
 from backend.social.social_models import SocialTopic, SocialAction, SocialDeferredReply
-from backend.characters.terminal_characters import TERMINAL, context, lore, worldbook
+from backend.characters.terminal_characters import TERMINAL, context, background, lore, worldbook
 from backend.chat.expression import validate
 from backend.social.idle_social import _generate, SocialPreempted
 from backend.social.social_activity import SocialActivity
@@ -69,6 +69,8 @@ class SocialEngine:
             self.inflight[actor_id].discard(task)
 
     async def call(self, messages, topic):
+        from backend.platform.local_clock import with_time_context
+        messages=with_time_context(messages)
         background_busy = self.background.get()
         def stale():
             current = self.topic(topic['id'])
@@ -112,7 +114,9 @@ class SocialEngine:
             public_config = {key: config.get(key, default) for key, default in [('muted', False), ('allowInvites', True)]}
             return {'id':cid,'kind':room.kind,'title':room.title,'config':public_config,
                 'members':[a for a in roster if a['id'] in ids], 'directory':roster,
-                'history':[{'id':m.id,'speakerId':m.speaker_id,'speakerName':next((a['name'] for a in roster if a['id']==m.speaker_id),'指挥官'),'text':m.body,'replyTo':(m.metadata_json or {}).get('replyTo'),'mentions':(m.metadata_json or {}).get('mentions',[]),'topicId':(m.metadata_json or {}).get('topicId')} for m in visible],
+                'history':[{'id':m.id,'speakerId':m.speaker_id,'speakerName':next((a['name'] for a in roster if a['id']==m.speaker_id),'指挥官'),'text':m.body,'at':m.created_at.replace(tzinfo=m.created_at.tzinfo or UTC).timestamp(),
+                    'createdAt':m.created_at.replace(tzinfo=m.created_at.tzinfo or UTC).astimezone().isoformat(timespec='seconds'),
+                    'replyTo':(m.metadata_json or {}).get('replyTo'),'mentions':(m.metadata_json or {}).get('mentions',[]),'topicId':(m.metadata_json or {}).get('topicId')} for m in visible],
                 'invitationSummary':config.get('summaries',{}).get(actor_id,''),
                 'limitedHistory': bool(joined)}
 
@@ -212,7 +216,13 @@ class SocialEngine:
         This narrows attention; it does not change channel visibility or history.
         """
         opening=topic.get('openingMessageId') if topic.get('proactive') else None
-        if not opening:return room
+        if not opening:
+            from backend.chat.conversation_scope import dialogue_history, asks_about_work
+            from backend.chat.task_reference import DEICTIC, FOLLOWUP
+            prompt=topic.get('prompt','')
+            return {**room,'history':dialogue_history(room['history'],prompt,
+                preserve_context=bool(topic.get('routeKind')=='followup' or asks_about_work(prompt)
+                    or DEICTIC.search(prompt) or FOLLOWUP.search(prompt)))}
         start=next((i for i,m in enumerate(room['history']) if m['id']==opening),None)
         return {**room,'history':room['history'][start:]} if start is not None else room
 
@@ -257,6 +267,56 @@ class SocialEngine:
         return ordered[:3]
 
     @staticmethod
+    def actor_room(room, actor):
+        """Project speech ownership for this actor without changing the archive."""
+        roster={a['id']:a for a in [*room.get('directory',[]),*room['members']]}
+        names={aid:a.get('name') or a.get('sourceName') or '未知发言者' for aid,a in roster.items()}
+        names['commander']='指挥官'
+        return {**room,'history':[{**m,
+            'speakerName':names.get(m.get('speakerId'),m.get('speakerName') or '未知发言者'),
+            'speakerSourceName':roster.get(m.get('speakerId'),{}).get('sourceName'),
+            'speakerRole':('self' if m.get('speakerId')==actor['id'] else
+                'commander' if m.get('speakerId')=='commander' else 'peer'),
+            'ownSpeech':m.get('speakerId')==actor['id']} for m in room['history']]}
+
+    @staticmethod
+    def history_messages(room, actor):
+        # Only this actor's actual utterances belong to the assistant role.  A
+        # peer turn must not use the generic user role: chat models often treat
+        # every user-role turn as the same speaker even when a name is prefixed
+        # in the text.  Keep peers and the commander as explicit transcript
+        # records instead.
+        rendered=[]
+        for m in room['history']:
+            sid=str(m.get('speakerId') or 'unknown')
+            if sid==actor['id']:
+                rendered.append({'role':'assistant','content':m['text']})
+                continue
+            name=m.get('speakerName') or '未知发言者'
+            source=m.get('speakerSourceName') or ''
+            role=m.get('speakerRole') or ('commander' if sid=='commander' else 'peer')
+            rendered.append({'role':'system','content':
+                f'【历史转录 role={role} speakerId={sid} speakerName={name}'
+                +(f' sourceName={source}' if source else '')+f'】\n{m["text"]}'})
+        return rendered
+
+    @staticmethod
+    def identity_claim_mismatch(text, actor, room):
+        """Return the peer name when a reply explicitly claims that identity."""
+        if not isinstance(text,str):
+            return None
+        own={str(actor.get('name') or ''),str(actor.get('sourceName') or '')}
+        own.discard('')
+        for peer in room.get('directory',[]):
+            if peer.get('id') in {actor.get('id'),'commander'}:
+                continue
+            names={str(peer.get('name') or ''),str(peer.get('sourceName') or '')}
+            for name in names-own-{''}:
+                if re.search(r'(?:我(?:是|叫|就是)|这(?:里|边)是)\s*'+re.escape(name)+r'(?=$|[，。！？、!?~～啦呀哦喔呢啊\s])',text):
+                    return name
+        return None
+
+    @staticmethod
     def conversation_focus(room, topic):
         """Current conversational handoff, without repeatedly resetting the topic."""
         history=room['history']
@@ -276,11 +336,29 @@ class SocialEngine:
         visible=self.snapshot(room['id'],actor['id'])
         last=visible['history'][-1] if visible['history'] else {}
         return self.c.cognition.social_participation(actor['id'],room['id'],last.get('speakerId'),
-            {m['text'] for m in visible['history']})
+            {m['text'] for m in visible['history']} & {m['text'] for m in room['history']})
+
+    @staticmethod
+    def turn_contract(actor, room, topic):
+        latest=room['history'][-1] if room['history'] else None
+        direct=bool(not topic.get('spoken') and latest and latest['speakerId']=='commander' and (
+            actor['id'] in latest.get('mentions',[]) or '@'+actor['name'] in latest['text'] or
+            '@'+actor.get('sourceName',actor['name']) in latest['text']))
+        opening=bool(not room['history'] and topic.get('openingActorId')==actor['id'])
+        new_group=bool(direct and re.search(r'(?:另建|新建|建立|创建|建|另开|新开|拉).{0,12}群',latest['text']))
+        actions=(['speak'] if opening or topic.get('routeKind')=='clarify' else
+            ['speak','create_group'] if new_group else
+            ['speak','invite','create_group']+([] if direct else ['wait','end']))
+        guidance=('用户要另建群，create_group 发起新群邀请，invite 只将群外人物加入当前群。'
+            'create_group 会由系统先询问目标人物是否接受，接受后才建立新群；不必用 speak 先重复口头征求同意。'
+            '目标必须是用户请求的真实目录成员；若不愿或暂不能建群，选择 speak 说明，不用将来会执行的承诺替代行动。' if new_group else
+            '你刚发起新群，请选择 speak 自然开场，不再次邀请。' if opening else
+            '用户点名请求，须用行动或 speak 回应，也可以拒绝。' if direct else '')
+        return direct,opening,new_group,actions,guidance
 
     async def prepare(self, actor, room, topic, source):
         if self.actor_busy(actor['id']):raise SocialPreempted()
-        room=self.topic_room(room,topic)
+        room=self.actor_room(self.topic_room(room,topic),actor)
         runtime=getattr(self.c.cognition,'runtime',None)
         if not runtime or not runtime.active(actor['id']):return None
         from backend.chat.conversation_scope import asks_about_work
@@ -288,24 +366,19 @@ class SocialEngine:
             topic={**topic,'prompt':room['invitationSummary']}
         visible_room={**room,'history':room['history'][-12:]}
         latest=room['history'][-1] if room['history'] else None
-        direct_request=bool(not topic.get('spoken') and latest and latest['speakerId']=='commander' and (
-            actor['id'] in latest.get('mentions',[]) or '@'+actor['name'] in latest['text'] or
-            '@'+actor.get('sourceName',actor['name']) in latest['text']))
-        opening=bool(not room['history'] and topic.get('openingActorId')==actor['id'])
-        actions=['speak','invite','create_group']+([] if direct_request or opening else ['wait','end'])
-        if topic.get('routeKind')=='clarify':
-            actions=['speak']
-        current_text=' '.join(m['text'] for m in room['history'][-4:]) or topic['prompt']
+        _,_,_,actions,turn_guidance=self.turn_contract(actor,room,topic)
+        latest_user=next((m for m in reversed(room['history']) if m['speakerId']=='commander'),None)
+        current_text=(latest_user or latest or {}).get('text',topic['prompt'])
         from backend.chat.task_reference import resolve_task_reference, DEICTIC
         related_work=resolve_task_reference(self.c.store,actor['id'],
-            latest['text'] if latest else topic['prompt'],room['history'][-6:])
-        decision = await runtime.think(actor['id'],source,json.dumps({'room':visible_room,
+            current_text,room['history'][-6:])
+        decision = await runtime.think(actor['id'],source,json.dumps({'actorId':actor['id'],'actorName':actor['name'],'room':visible_room,
             'focus':self.conversation_focus(room,topic),'turn':topic.get('spoken',0),
             'relatedWork':related_work,
             'guidance':('这是成员自己发起的交流；用户没有提出本轮问题。优先接同伴刚才的具体话或自己的相关兴趣，'
                 '不要转成等待用户回来、回复或批准。' if topic.get('proactive') else
                 '跟随最近消息；已结束的内容无需复述。')+
-                '可以自然转题或沉默，不用轮流表态。'},ensure_ascii=False),
+                '可以自然转题或沉默，不用轮流表态。'+turn_guidance},ensure_ascii=False),
             mode='social',conversation_id=room['id'],public=True,background=bool(self.background.get()),actions=actions,
             include_task_memory='outcomes' if (related_work and not related_work.get('ambiguous')
                 or asks_about_work(current_text) and not DEICTIC.search(current_text)) else False,
@@ -314,21 +387,28 @@ class SocialEngine:
 
     async def decide(self, actor, room, topic, source, prepared=None):
         if self.actor_busy(actor['id']):raise SocialPreempted()
-        room=self.topic_room(room,topic)
+        room=self.actor_room(self.topic_room(room,topic),actor)
         # The original topic prompt may predate admission and was not necessarily shared.
         topic = {**topic, 'prompt': room['invitationSummary']} if room.get('limitedHistory') else topic
-        persona,_=context(actor['id'])
+        persona,_=background(actor['id'])
         # A group expression must not receive private task bodies or judgments.
         mind=json.dumps(self.participation(actor,room),ensure_ascii=False)
         latest=room['history'][-1] if room['history'] else None
-        direct_request=bool(not topic.get('spoken') and latest and latest['speakerId']=='commander' and (
-            actor['id'] in latest.get('mentions',[]) or '@'+actor['name'] in latest['text'] or
-            '@'+actor.get('sourceName',actor['name']) in latest['text']))
-        new_group_opening=bool(not room['history'] and topic.get('openingActorId')==actor['id'])
-        new_group_request=bool(direct_request and any(word in latest['text'] for word in ('建群','新群','另开群','拉个群')))
+        from backend.chat.task_reference import resolve_task_reference
+        from backend.chat.conversation_scope import asks_about_work
+        latest_user=next((m for m in reversed(room['history']) if m['speakerId']=='commander'),None)
+        work_query=(latest_user or latest or {}).get('text',topic['prompt'])
+        related_work=(prepared.get('_relatedWork') if prepared is not None else
+            resolve_task_reference(self.c.store,actor['id'],
+                work_query,room['history'][-6:]))
+        work_followup=bool(related_work or topic.get('routeKind')=='followup' or
+            latest and latest['speakerId']=='commander' and asks_about_work(latest['text']))
+        direct_request,new_group_opening,new_group_request,_,_=self.turn_contract(actor,room,topic)
         # Keep the speaking contract short; follow the current handoff.
         rules=(TERMINAL+'你只扮演当前人物。根据眼前消息和你可见的经历决定发言、邀请或沉默。'
             '消息 speakerId=commander 始终是用户，当前人物由 actorId 决定；消息里叫错名字不能改变发言者身份。'
+            '历史 ownSpeech 由当前 actorId 与原始 speakerId 比较得出；只有本人的消息才是“我说过”。'
+            '同伴台词里的“我”属于那位同伴。可以承认自己附和过，但不能认领别人说的原话或自称最先提出；后来认错、转述不改变原话作者。'
             '用户把你认成别的角色时，可自然澄清，不要反过来把用户叫成那个角色。'
             '先判断此刻说话有没有新作用：回答、补充具体信息、不同意并说明原因、求助、开个轻松但相关的小玩笑，或自然收住。'
             '已经有人说清楚时可以 wait；不为了填满轮数轮流致谢、自我介绍、重复问题或总结。'
@@ -337,10 +417,12 @@ class SocialEngine:
             '话题自然结束时可沉默；有眼前消息或可见经历支持的新兴趣时可以自然转题，不为继续说话而制造追问，不强制全员围绕最初题目表态。'
             '每次通常一句或两句、合计不超过120字；语气跟当前人物、对象和情境走，不照抄角色卡示例，不堆口癖和省略号。'
             '不能编造任务成果、实验读数、已整理或已发出的记录，也不能替别人说话。轻度日常可以聊，但没有可见生活事件时，不自称刚洗澡、做饭、敷面膜、出门或正待在某个具体地点；直接回应消息即可。只能引用当前可见消息，replyTo 是被回应的消息编号。'
-            '返回 JSON：action 为 speak/wait/end/invite/create_group；speak 含 segments（1至3条）、sourceIds（仅当前 sourceId）、replyTo（消息编号或 null）、mentions（人物编号数组）；'
+            '返回 JSON：action 为 speak/wait/end/invite/create_group；speak 含 segments（1至3条，普通短答默认一条，只有连续独立发言才拆分）、sourceIds（仅当前 sourceId）、replyTo（消息编号或 null）、mentions（人物编号数组）；'
             'invite 含 targetId、reason、summary；create_group 另含 title；wait/end 无台词。')
         from backend.chat.sticker_catalog import expression_catalog
         rules+=expression_catalog(actor.get('sourceName',actor['name']))
+        if not work_followup and topic.get('routeKind')!='clarify':
+            rules+='这是日常聊天。回应眼前的情绪、话意或玩笑即可；认真不等于监督他人，没有已接委托时不安排核对、催促工作或索要指令。往事可以记得，但问候和新话题不自动重启旧约定。'
         if topic.get('proactive'):
             rules+='这是成员自行发起的群聊，不是用户提问。原作里对指挥官说的台词只反映与指挥官的关系，不能照搬成同伴对话的目标。接最近同伴的具体话，也可以聊自己有依据的兴趣；别把每轮变成等指挥官回来、回复或批准。若同伴已说清，直接收住。'
         rules+='若已经回答清楚且没有需要别人回应的新问题，speak 可以附 endAfterReply:true，自然结束本话题。不反复接力表示待命或重复已作出的分工。'
@@ -349,18 +431,14 @@ class SocialEngine:
         if direct_request:
             rules+='用户正在点名向你提出请求。你可以接受、拒绝或说明条件，但要用行动或一句话回应，不能无声略过。'
         if new_group_request:
-            rules+='用户要另建一个群：请用 create_group，目标人物即使已在当前群也可以加入新群；invite 只用于把群外人物加进当前群。若不愿建群，用 speak 简短说明。'
+            rules+=self.turn_contract(actor,room,topic)[4]
         if new_group_opening:
             rules+='你刚发起这个新群。现在用一句自然的开场说明要聊什么，给同伴接话的空间；不要轮流自我介绍，也不要声称已经完成任何资料或工作。'
         if topic.get('routeKind')=='clarify':
             rules+='本轮委托范围不明确，尚未接单；只需一位成员问一个具体澄清问题。不要声称已开始处理，也不要邀请其他成员。发问后设置 endAfterReply:true。'
         if topic.get('routeKind')=='followup' and not related_work:
             rules+='用户在追问以前的工作，但本角色当前没有匹配的可核验来源。不要断言自己从未读过这份资料；请问清书名或已读范围，不能代替同伴声称亲自读取。'
-        current_text=' '.join(m['text'] for m in room['history'][-4:]) or topic['prompt']
-        from backend.chat.task_reference import resolve_task_reference
-        related_work=(prepared.get('_relatedWork') if prepared is not None else
-            resolve_task_reference(self.c.store,actor['id'],
-                latest['text'] if latest else topic['prompt'],room['history'][-6:]))
+        current_text=latest['text'] if latest else topic['prompt']
         if related_work and related_work.get('ambiguous'):
             rules+='当前“这本书”等指代对应多份资料，只询问具体是哪一本，不猜测读过哪份。'
         visible_room={**room,'history':room['history'][-12:]}
@@ -373,16 +451,28 @@ class SocialEngine:
                 return {'action':decision['intent']['action']}
             # Rendering gets the selected public action, not private appraisals or
             # the short tradeoff recorded for diagnostics.
-            mind=json.dumps({'intent':{k:v for k,v in decision['intent'].items()
-                if k in {'action','purpose','targetId','method'}}},ensure_ascii=False)
-            persona=json.dumps({'name':actor['name'],'personality':runtime.profile(actor['id'])['interpretation']},ensure_ascii=False)
-            rules+='表达必须遵守此意图中的 action 和 targetId，不能替换行动。'
-        messages=[{'role':'system','content':rules},{'role':'system','content':'当前人物：'+persona},
+            from backend.characters.dialogue_persona import personality_for_dialogue, public_dialogue_intent
+            mind=json.dumps({'intent':public_dialogue_intent(decision['intent'])},ensure_ascii=False)
+            persona=json.dumps({'name':actor['name'],'background':persona,
+                'personality':personality_for_dialogue(runtime.profile(actor['id'])['interpretation'])},ensure_ascii=False)
+            rules+='表达必须遵守此意图中的 action 和 targetId，不能替换行动；意图中的内部目的、方法和取舍只用于认知，不要原样说出口。'
+        actor_source=actor.get('sourceName',actor['name'])
+        rules+=('当前人物身份是唯一绑定：只扮演 actorId='+actor['id']+'，显示名='+actor['name']+
+            '，原始角色名='+actor_source+'。输出中的“我”只能指向这个 actorId；历史转录中其他人的“我”仍属于他们。'
+            '如果台词需要提到同伴，使用转录里的 speakerName，不要把同伴的身份改成自己的。')
+        messages=[{'role':'system','content':rules},
+            {'role':'system','content':'当前人物（唯一发言者）：displayName='+actor['name']+
+                '；sourceName='+actor_source+'；actorId='+actor['id']+'\n'+persona},
             {'role':'system','content':'可见认知：'+mind},
-            {'role':'system','content':'当前追问关联的本角色已核验工作经历（若为空则不能自称读过）：'
-                +json.dumps(related_work,ensure_ascii=False)},
+            *([{'role':'system','content':'当前追问关联的本角色已核验工作经历：'
+                +json.dumps(related_work,ensure_ascii=False)}] if related_work else []),
             {'role':'system','content':'相关背景：'+json.dumps(lore(current_text,actor.get('sourceName',actor['name'])),ensure_ascii=False)},
-            {'role':'user','content':json.dumps({'room':visible_room,'focus':self.conversation_focus(room,topic),'sourceId':source},ensure_ascii=False)}]
+            {'role':'system','content':'以下是逐条历史转录。每条记录的 speakerId 是唯一作者；role=peer/commander 的记录不是当前人物发言，不能把其中的“我”认作当前人物。'},
+            *self.history_messages(visible_room,actor),
+            {'role':'user','content':json.dumps({'actorId':actor['id'],'actorName':actor['name'],
+                'room':{**visible_room,'history':[{k:v for k,v in m.items() if k!='text'}
+                    for m in visible_room['history']]},
+                'focus':self.conversation_focus(room,topic),'sourceId':source},ensure_ascii=False)}]
         async with self.gate:
             if topic.get('attachments') and not room.get('limitedHistory'):
                 from backend.chat.attachments import image_parts
@@ -410,6 +500,9 @@ class SocialEngine:
                         validate(value,source,facts={'prompt':topic['prompt'],
                             'history':[m['text'] for m in room['history']]})
                         speech=' '.join(value['segments'])
+                        claimed=self.identity_claim_mismatch(speech,actor,room)
+                        if claimed:
+                            raise ValueError('台词把当前人物误认成同伴 '+claimed+'；请按当前 actorId 重新表达')
                         if len(speech)>120 or len(value['segments'])>2:
                             raise ValueError('群聊接话请缩成一至两段、合计不超过120字。')
                         if (topic.get('proactive') and latest and latest['speakerId']!='commander'

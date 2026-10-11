@@ -5,10 +5,15 @@ fastapi==0.141.1
 uvicorn[standard]==0.52.4
 SQLAlchemy==2.0.52
 httpx==0.28.1
+deepseek-harness-sdk==0.1.5rc1
+deepseek-harness-runtime-bin==0.1.5rc1
 python-dotenv==1.2.2
 pypdf==6.18.1
+pypdfium2==5.13.0
+rapidocr-onnxruntime==1.4.4
 python-docx==1.2.0
 openpyxl==3.1.5
+pandas==3.0.5
 playwright==1.62.0
 pillow==12.3.0
 pywinauto==0.6.9; sys_platform == 'win32'

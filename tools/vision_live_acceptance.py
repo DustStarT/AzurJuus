@@ -1,4 +1,4 @@
-"""Real configured-model image chat + Hermes task on isolated synthetic data."""
+"""Real configured-model image chat + DeepSeek Harness task on isolated synthetic data."""
 import os,json,sqlite3,sys,time
 from pathlib import Path
 from uuid import uuid4
@@ -10,7 +10,8 @@ sys.path.insert(0,str(ROOT))
 def main():
     from backend.credentials import reveal
     with sqlite3.connect((ROOT/'.azurjuus/azurjuus.db').as_uri()+'?mode=ro',uri=True) as db:
-        base,model,secret=db.execute('SELECT llm_base_url,llm_model,llm_api_key FROM workspace_settings LIMIT 1').fetchone()
+        base,model,secret,connected_raw,secretary=db.execute('SELECT llm_base_url,llm_model,llm_api_key,connected_agent_ids,secretary_agent_id FROM workspace_settings LIMIT 1').fetchone()
+    connected=json.loads(connected_raw)
     home=ROOT/'validation/vision-live'/uuid4().hex
     work=home/'work';work.mkdir(parents=True)
     code='PORT-'+str(int(uuid4().hex[:6],16))
@@ -20,7 +21,7 @@ def main():
     os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///'+(home/'app.db').as_posix(),
         AZURJUUS_WORKSPACE_STATE_PATH=str(home/'state/workspace.json'),AZURJUUS_WORKSPACE_ROOT=str(work),
         AZURJUUS_SOCIAL_ENABLED='0',AZURJUUS_REFLECTION_ENABLED='0',AZURJUUS_SKILL_TRIALS_ENABLED='0',
-        AZURJUUS_EXPRESSION_ENABLED='1',AZURJUUS_EXECUTION_BACKEND='hermes')
+        AZURJUUS_EXPRESSION_ENABLED='1',AZURJUUS_EXECUTION_BACKEND='deepseek-harness')
     from desktop import start_local_server,stop_local_server,wait_for_server
     server,thread,url,_=start_local_server(port=0)
     report={'model':model,'passed':False,'checks':[]}
@@ -32,6 +33,9 @@ def main():
         started=time.monotonic()
         while time.monotonic()-started<240:
             run=next(r for r in get('/api/runs')['runs'] if r['id']==rid)
+            if run.get('mode')!='chat':
+                from tools.acceptance_reviews import approve_sync
+                report.setdefault('userStageApprovals',[]).extend(approve_sync(post,run,work))
             if run['status'] in {'failed','paused','cancelled','completed'}:
                 return run,round(time.monotonic()-started,2)
             time.sleep(.5)
@@ -39,8 +43,9 @@ def main():
     try:
         assert wait_for_server(url)
         post('/api/workspace/save',{'workspace':{'settings':{'llmBaseUrl':base,'llmModel':model,'llmApiKey':reveal(secret),
-            'authorizedWorkspaceRoot':str(work),'visionEnabled':True,'runTimeoutSeconds':180}}})
-        snap=get('/api/bootstrap')['snapshot'];cid=next(c['id'] for c in snap['conversations'] if c['kind']=='dm')
+            'authorizedWorkspaceRoot':str(work),'visionEnabled':True,'runTimeoutSeconds':180,
+            'connectedAgentIds':connected,'secretaryAgentId':secretary}}})
+        snap=get('/api/bootstrap')['snapshot'];cid=next(c['id'] for c in snap['conversations'] if c['kind']=='dm' and secretary in c['memberIds'])
         uploaded=requests.post(url+'/api/attachments',params={'conversationId':cid,'name':'sample.png'},data=(work/'sample.png').read_bytes(),timeout=20)
         uploaded.raise_for_status();aid=uploaded.json()['id']
         for mode,prompt in [('chat','请读出图片里的完整校验码，只回答这个码。'),('task','读取附件图片，把图片中完整校验码写入 answer.txt，检查文件内容后交付。不要猜测校验码。')]:

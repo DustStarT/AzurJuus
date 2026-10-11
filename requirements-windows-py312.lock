@@ -1,4 +1,4 @@
-# Validated Windows 11 / Python 3.12.13 environment; Hermes source is pinned separately.
+# Windows / Python 3.12 dependency closure for the application and verification tools.
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
@@ -16,6 +16,8 @@ concurrent-log-handler==0.9.29
 croniter==6.0.0
 cryptography==50.0.0
 distro==1.9.0
+deepseek-harness-runtime-bin==0.1.5rc1
+deepseek-harness-sdk==0.1.5rc1
 et_xmlfile==2.0.0
 fastapi==0.141.1
 fire==0.7.1
@@ -113,3 +115,11 @@ uvicorn==0.52.4
 watchfiles==1.2.0
 wcwidth==0.8.3
 websockets==15.0.1
+pypdfium2==5.13.0
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.30.0
+opencv-python==5.0.0.93
+pyclipper==1.4.0
+Shapely==2.1.2
+flatbuffers==25.12.19
+protobuf==7.36.2

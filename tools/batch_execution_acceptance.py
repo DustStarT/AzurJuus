@@ -17,7 +17,8 @@ from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-STATE = ROOT / '.azurjuus' / 'batch-execution' / uuid4().hex
+STATE = ROOT / 'validation' / 'batch-execution' / uuid4().hex
+from tools.acceptance_reviews import pending_reviews
 
 def reply_id(rid, phase='result'):
     return 'speech-' + hashlib.sha256((rid + ':' + phase).encode()).hexdigest()[:24]
@@ -25,7 +26,7 @@ WORK = STATE / 'work'
 WORK.mkdir(parents=True)
 (WORK / 'source.txt').write_text('Synthetic batch test: 2 + 3 = 5.\n', encoding='utf-8')
 with sqlite3.connect((ROOT / '.azurjuus/azurjuus.db').as_uri() + '?mode=ro', uri=True) as db:
-    SAVED = db.execute('SELECT llm_base_url,llm_model,llm_api_key FROM workspace_settings LIMIT 1').fetchone()
+    SAVED = db.execute('SELECT llm_base_url,llm_model,llm_api_key,connected_agent_ids,secretary_agent_id FROM workspace_settings LIMIT 1').fetchone()
 
 
 def free_port():
@@ -41,7 +42,7 @@ def main():
     os.environ.update(AZURJUUS_DATABASE_URL='sqlite+pysqlite:///' + (STATE / 'app.db').as_posix(),
         AZURJUUS_WORKSPACE_STATE_PATH=str(STATE / 'state' / 'workspace.json'), AZURJUUS_WORKSPACE_ROOT=str(WORK),
         AZURJUUS_REDIS_URL='', AZURJUUS_CHROMA_URL='', AZURJUUS_SOCIAL_ENABLED='0',
-        AZURJUUS_EXECUTION_BACKEND='hermes', AZURJUUS_PORT=str(port), AZURJUUS_DESKTOP_LOG_DIR=str(STATE/'logs'),
+        AZURJUUS_EXECUTION_BACKEND='deepseek-harness', AZURJUUS_PORT=str(port), AZURJUUS_DESKTOP_LOG_DIR=str(STATE/'logs'),
         QTWEBENGINE_REMOTE_DEBUGGING='127.0.0.1:' + str(debug))
     # Match .env.example and the user's actual .bat launch configuration.
     os.environ['AZURJUUS_WORKSPACE_STATE_PATH'] = (STATE / 'state' / 'workspace.json').relative_to(ROOT).as_posix()
@@ -52,7 +53,9 @@ def main():
     with TestClient(app):
         with session_scope() as session:
             settings = app.state.service.get_workspace(session)
-            settings.llm_base_url, settings.llm_model, settings.llm_api_key = SAVED
+            settings.llm_base_url, settings.llm_model, settings.llm_api_key = SAVED[:3]
+            settings.connected_agent_ids=json.loads(SAVED[3])
+            settings.secretary_agent_id=SAVED[4]
             settings.authorized_workspace_root = str(WORK)
     out = ROOT / 'validation' / 'batch-execution'
     out.mkdir(parents=True, exist_ok=True)
@@ -98,6 +101,9 @@ def main():
                 if greeting:
                     page.get_by_text('能代', exact=True).first.click()
                 def send(label, text):
+                    # The mode selector is a native details menu; open it before
+                    # selecting a mode so the click also works in QWebEngine.
+                    page.locator('.composer-mode summary').click()
                     page.locator('.composer-mode button').filter(has_text=label).click()
                     page.get_by_label('消息输入').fill(text)
                     with page.expect_response(lambda r: r.url.endswith('/api/messages/send') and r.request.method == 'POST') as response:
@@ -113,6 +119,12 @@ def main():
                             raise AssertionError(run.get('error') or run['status'])
                         if run and run['status'] == 'completed':
                             return run
+                        if run and mode!='chat':
+                            for review_id in pending_reviews(run,WORK):
+                                response=page.request.post(f"http://127.0.0.1:{port}/api/runs/{run['id']}/reviews/{review_id}",
+                                    data={'decision':'approved','note':'隔离合成桌面场景，已检查阶段证据。'})
+                                assert response.ok,response.text()
+                                report.setdefault('userStageApprovals',[]).append(review_id)
                         time.sleep(.5)
                     raise AssertionError('No completed ' + mode + ' run')
                 send('闲聊', '你好' if greeting else '这是合成测试，请只回复 BATCH_CHAT_OK。')
@@ -146,40 +158,59 @@ def main():
                     report['checks'].append('Exact directory-listing query completed with read-only evidence and no mandatory file artifact')
                     page.screenshot(path=str(out / 'listing.png'))
                     print('BATCH_LISTING_PASSED', flush=True)
-                    rid = send('协作', '这是合成协作验收，请安排两个不同成员、两个有依赖的子任务：能代开工时先用 discuss 问信浓“我想少查一遍，会不会漏掉来源？”，随后读取 source.txt，将来源文件名及 2+3=5 写入 facts.txt 并读回核验；信浓回应同伴的问题，等上一项完成，再读取 facts.txt，将依据和结论写入 team-report.txt 并读回核验。秘书最后读取两个文件核验。只操作上述三个文件，不使用命令或网络。聊天自然简短，技术证据放在工具交付中。')
-                    team = wait_run('task', rid)
-                    assert team['teamConversationId'] == team['conversationId'] != team['originConversationId']
-                    assignments = team['assignments']
-                    assert len({a['actorId'] for a in assignments}) >= 2, assignments
-                    assert any(a['dependsOn'] for a in assignments), assignments
-                    assert all(a['status'] == 'completed' for a in assignments)
-                    for name in ('facts.txt', 'team-report.txt'):
-                        assert '5' in (WORK / name).read_text(encoding='utf-8')
-                    # Execution completes before the separate expression callback.
-                    page.locator('[data-message-id="' + reply_id(rid) + '"]').wait_for(timeout=35000)
-                    deadline = time.monotonic() + 10
-                    while time.monotonic() < deadline:
-                        latest = page.evaluate("rid => fetch('/api/runs/' + rid).then(r=>r.json())", rid)['run']
-                        if latest.get('resultMessageId'):
-                            break
-                        time.sleep(.1)
-                    boot = page.evaluate("fetch('/api/bootstrap').then(r=>r.json())")['workspace']['data']
-                    group = next(v for v in boot['conversations'] if v['id'] == team['conversationId'])
-                    assert {a['actorId'] for a in assignments} <= set(group['memberIds'])
-                    messages = boot['messages'][team['conversationId']]
-                    assert {a['actorId'] for a in assignments} <= {m['speakerId'] for m in messages}
-                    assert any(m['id'] == rid + '-origin-result' for m in boot['messages'][team['originConversationId']])
-                    assert team.get('methods')
-                    assert any(d['status'] == 'completed' for d in team.get('discussions', [])), team.get('discussions')
-                    notice = next(m for m in boot['messages'][team['originConversationId']] if m['id'] == rid + '-origin-result')
-                    assert notice['type'] == 'task_notice' and notice['speakerId'] == 'commander'
-                    report['checks'].append('Live peer discussion and persona-isolated private task notice')
-                    report['collaborationRunId'] = rid
-                    report['collaborationAssignments'] = [{'id':a['id'], 'actorId':a['actorId'], 'dependsOn':a['dependsOn']} for a in assignments]
-                    report['checks'].append('Collaboration: dedicated group, two distinct workers, dependency handoff, two real verified files, member replies and origin summary')
-                    page.locator('[data-message-id="' + reply_id(rid) + '"]').wait_for(timeout=35000)
-                    page.screenshot(path=str(out / 'collaboration.png'))
-                    print('BATCH_COLLABORATION_PASSED', flush=True)
+                    boot = page.evaluate("fetch('/api/bootstrap').then(r=>r.json())")['workspace']
+                    settings = boot['settings']
+                    configured_ids = set(settings.get('connectedAgentIds') or [])
+                    available = [a for a in boot['data']['agents'] if a['id'] in configured_ids and not a.get('socialOnly')]
+                    report['configuredCollaborationRoster'] = [{'id': a['id'], 'name': a['name']} for a in available]
+                    if len(available) < 2:
+                        report['checks'].append('Collaboration skipped: fewer than two configured task-capable connected members')
+                    else:
+                        roster = ', '.join(f"{a['name']} ({a['id']})" for a in available)
+                        collab_prompt = (
+                            'Collaborative acceptance. Use only these configured connected members: ' + roster +
+                            '. Do not invent, add, or mention any person outside this list. '
+                            'Assign two different listed members to two dependent subtasks. '
+                            'The first worker should discuss whether source.txt could be incomplete, read source.txt, '
+                            'and write facts.txt with the source name and 2+3=5. The second worker must read facts.txt '
+                            'and write team-report.txt with the evidence and conclusion, then verify it. '
+                            'Only operate on source.txt, facts.txt, and team-report.txt; do not use command or network tools.'
+                        )
+                        rid = send('协作', collab_prompt)
+                        team = wait_run('task', rid)
+                        assert team['teamConversationId'] == team['conversationId'] != team['originConversationId']
+                        assignments = team['assignments']
+                        assert len({a['actorId'] for a in assignments}) >= 2, assignments
+                        assert {a['actorId'] for a in assignments} <= configured_ids, assignments
+                        assert any(a['dependsOn'] for a in assignments), assignments
+                        assert all(a['status'] == 'completed' for a in assignments)
+                        for name in ('facts.txt', 'team-report.txt'):
+                            assert '5' in (WORK / name).read_text(encoding='utf-8')
+                        # Execution completes before the separate expression callback.
+                        page.locator('[data-message-id="' + reply_id(rid) + '"]').wait_for(timeout=35000)
+                        deadline = time.monotonic() + 10
+                        while time.monotonic() < deadline:
+                            latest = page.evaluate("rid => fetch('/api/runs/' + rid).then(r=>r.json())", rid)['run']
+                            if latest.get('resultMessageId'):
+                                break
+                            time.sleep(.1)
+                        boot = page.evaluate("fetch('/api/bootstrap').then(r=>r.json())")['workspace']['data']
+                        group = next(v for v in boot['conversations'] if v['id'] == team['conversationId'])
+                        assert {a['actorId'] for a in assignments} <= set(group['memberIds'])
+                        messages = boot['messages'][team['conversationId']]
+                        assert {a['actorId'] for a in assignments} <= {m['speakerId'] for m in messages}
+                        assert any(m['id'] == rid + '-origin-result' for m in boot['messages'][team['originConversationId']])
+                        assert team.get('methods')
+                        assert any(d['status'] == 'completed' for d in team.get('discussions', [])), team.get('discussions')
+                        notice = next(m for m in boot['messages'][team['originConversationId']] if m['id'] == rid + '-origin-result')
+                        assert notice['type'] == 'task_notice' and notice['speakerId'] == 'commander'
+                        report['checks'].append('Live peer discussion and persona-isolated private task notice')
+                        report['collaborationRunId'] = rid
+                        report['collaborationAssignments'] = [{'id':a['id'], 'actorId':a['actorId'], 'dependsOn':a['dependsOn']} for a in assignments]
+                        report['checks'].append('Collaboration: dedicated group, two distinct workers, dependency handoff, two real verified files, member replies and origin summary')
+                        page.locator('[data-message-id="' + reply_id(rid) + '"]').wait_for(timeout=35000)
+                        page.screenshot(path=str(out / 'collaboration.png'))
+                        print('BATCH_COLLABORATION_PASSED', flush=True)
                 send('闲聊', '这是合成退出测试，请用几句话描述晴天。')
                 deadline = time.monotonic() + 10
                 active = None
@@ -205,10 +236,11 @@ def main():
                 assert status == 'paused', status
                 assert 'Traceback' not in (STATE / 'launcher.log').read_text(encoding='utf-8')
                 assert 'Traceback' not in (STATE / 'logs/desktop.log').read_text(encoding='utf-8')
-                homes = list((STATE / 'state/hermes').glob('*/*'))
-                assert homes and any((home / 'state.db').is_file() for home in homes)
-                assert not (ROOT / '.vendor/hermes-agent' / os.environ['AZURJUUS_WORKSPACE_STATE_PATH']).parent.exists()
-                report['checks'].append('relative state path resolved before child cwd; Hermes state/config share the intended directory')
+                homes = list((STATE / 'state/deepseek-harness').glob('*/*'))
+                assert homes and all((home / 'azurjuus.cordis.patch.yml').is_file() for home in homes)
+                assert all((home / 'profiles').is_dir() and (home / 'sessions').is_dir() for home in homes)
+                assert not (ROOT / '.vendor/deepseek-harness' / os.environ['AZURJUUS_WORKSPACE_STATE_PATH']).parent.exists()
+                report['checks'].append('relative state path resolved before child cwd; DeepSeek Harness profiles, sessions and Cordis patches share the intended directory')
                 report['checks'].append('active run saved as paused; launcher and child processes exited without traceback')
                 report['status'] = 'passed'
     except Exception as exc:
