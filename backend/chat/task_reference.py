@@ -14,16 +14,16 @@ from backend.mind.cognition_models import Experience
 from backend.chat.conversation_scope import asks_about_work
 
 READ_TOOLS = {'read_file', 'read_document'}
-DEICTIC = re.compile(r'这(?:本|篇|份|个|部|些)?(?:书|电子书|文档|文件|报告|资料)|那(?:本|篇|份|个|部)?(?:书|文档|文件|报告)|刚才(?:看|读|查)|你(?:看|读)过')
+DEICTIC = re.compile(r'这(?:本|篇|份|个|部|张|些)?(?:书|电子书|文档|文件|报告|资料|表格|工作表|PDF|XLSX|Excel)|那(?:本|篇|份|个|部|张)?(?:书|文档|文件|报告|表格|PDF)|刚才(?:看|读|查)|你(?:看|读)过', re.I)
 FOLLOWUP = re.compile(r'(?:它|里面|其中|内容|作者).{0,16}(?:写|讲|说|怎么样|如何|评价|觉得)|(?:你觉得|你怎么看).{0,12}(?:它|里面|其中)')
-FILE_NAME = re.compile(r'[\w\u4e00-\u9fff.-]+\.(?:pdf|epub|txt|docx?|md)(?![A-Za-z0-9])',re.I)
+FILE_NAME = re.compile(r'[\w\u4e00-\u9fff.-]+\.(?:pdf|epub|txt|docx?|xlsx?|csv|md)(?![A-Za-z0-9])',re.I)
 
 
 def read_sources(store, run: dict, actor_id: str) -> list[dict]:
     """Only successful calls by this actor prove that the actor read a source."""
     owners = {'planner': run.get('actorId'), 'reviewer': run.get('actorId'),
               'main': run.get('actorId')}
-    owners.update({item['id']: item['actorId'] for item in run.get('assignments', [])})
+    owners.update({item['id']: item['actorId'] for item in run.get('assignments', []) if item.get('id') and item.get('actorId')})
     result = []
     for call in store.calls(run['id']):
         if call['name'] not in READ_TOOLS or call['status'] != 'completed':
@@ -43,11 +43,20 @@ def read_sources(store, run: dict, actor_id: str) -> list[dict]:
 
 
 def resolve_task_reference(store, actor_id: str, query: str, history: list | None = None,
-                           *, force: bool = False) -> dict | None:
+                           *, force: bool = False, conversation_id: str = '', public: bool = False) -> dict | None:
     """A result may be mentioned in any joined room, but never attributed to a peer."""
     query = str(query or '').strip()
     if not query:
         return None
+    context_service = getattr(store, 'context_service', None)
+    if context_service:
+        from backend.context.contracts import ContextRequest
+        context_service.sync()
+        request = ContextRequest(actor_id, conversation_id, query=query, public=public)
+        result = context_service.reference(request, context_service.visible(request), history or [])
+        if result and result.get('unresolved'):
+            return None
+        return result
     context = ' '.join(str(item.get('text') or item.get('content') or '')
         for item in (history or [])[-4:]) if FOLLOWUP.search(query) else ''
     anchored = bool(context and (DEICTIC.search(context) or FILE_NAME.search(context)))
@@ -69,6 +78,20 @@ def resolve_task_reference(store, actor_id: str, query: str, history: list | Non
             'sources':m.metadata_json.get('readSources',[]),
             'at':m.created_at.replace(tzinfo=m.created_at.tzinfo or UTC).timestamp()
                 if m.created_at else 0} for m in memories]
+        # The cognition projector records a verified outcome before the work
+        # drawer memory is written.  Use that durable event as a recovery path
+        # so a restart or a failed delivery cannot erase a cross-mode follow-up.
+        # Sources still have to be present: an outcome alone is not proof that
+        # this actor read the referenced file.
+        known_saved={item['runId'] for item in saved if item.get('runId')}
+        for row in session.scalars(select(Experience).where(
+                Experience.actor_id == actor_id, Experience.kind == 'outcome',
+                Experience.forgotten.is_(False)).order_by(Experience.at.desc()).limit(100)).all():
+            sources=row.data.get('readSources',[]) if isinstance(row.data,dict) else []
+            if not row.run_id or not row.data.get('verified') or not sources or row.run_id in known_saved:
+                continue
+            saved.append({'runId':row.run_id,'summary':row.text,'sources':sources,'at':row.at})
+            known_saved.add(row.run_id)
     candidates = []
     for run in runs:
         if run['id'] not in forgotten:

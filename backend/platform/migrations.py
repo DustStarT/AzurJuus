@@ -10,6 +10,43 @@ from sqlalchemy import text
 from backend.credentials import protect
 
 
+def migrate_comment_replies(engine, settings):
+    """Add reply identity without replacing existing comments or timestamps."""
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if not inspector.has_table('social_comments') or 'reply_to_id' in {
+            column['name'] for column in inspector.get_columns('social_comments')}:
+        return
+    if engine.dialect.name == 'sqlite' and engine.url.database != ':memory:':
+        folder = settings.workspace_state_path.parent / 'migration-backups'
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-comment-replies.db')
+        with sqlite3.connect(engine.url.database) as src, sqlite3.connect(target) as dst:
+            src.backup(dst)
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE social_comments ADD COLUMN reply_to_id VARCHAR(120)'))
+
+
+def backup_context_migration(engine, settings):
+    """Back up existing stores before adding the source/ACL registry."""
+    if engine.dialect.name != 'sqlite' or engine.url.database == ':memory:':
+        return
+    with engine.connect() as conn:
+        if not engine.dialect.has_table(conn, 'actors') or engine.dialect.has_table(conn, 'context_sources'):
+            return
+    import shutil
+    folder = settings.workspace_state_path.parent / 'migration-backups' / (
+        datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-context-v6')
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, path in [('business.db', Path(engine.url.database)),
+                       ('runs.db', settings.workspace_state_path.parent / 'runs.db')]:
+        if path.exists():
+            with sqlite3.connect(path) as src, sqlite3.connect(folder / name) as dst:
+                src.backup(dst)
+    if settings.workspace_state_path.exists():
+        shutil.copy2(settings.workspace_state_path, folder / 'workspace.json')
+
+
 def backup_social_migration(engine, settings):
     if engine.dialect.name != 'sqlite' or engine.url.database == ':memory:':
         return

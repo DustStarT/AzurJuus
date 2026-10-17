@@ -16,7 +16,7 @@ from backend.platform.desktop_graphics import configure_desktop_graphics
 
 DESKTOP_RENDERER = configure_desktop_graphics()
 
-from PySide6.QtCore import QPoint, Qt, QEvent, QUrl, Signal, QTimer
+from PySide6.QtCore import QPoint, Qt, QEvent, QUrl, Signal, QTimer, QObject, Slot, QFile
 from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineScript
 from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebChannel import QWebChannel
 
 WINDOW_TITLE = "AzurJuus"
 WINDOW_MIN_WIDTH = 820
@@ -142,6 +143,18 @@ class DragStrip(QWidget):
         super().mouseDoubleClickEvent(event)
 
 
+class DesktopLayers(QObject):
+    """Qt widgets cannot be covered by CSS. Yield them to web modal surfaces."""
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    @Slot(bool)
+    def setOverlayActive(self, active):
+        self.window._controls.setVisible(not active)
+        self.window._drag_strip.setVisible(not active)
+
+
 class AzurJuusWindow(QMainWindow):
     resolution_requested = Signal(str)
     shutdown_finished = Signal(bool)
@@ -176,6 +189,7 @@ class AzurJuusWindow(QMainWindow):
 
         self._setup_shell()
         self._setup_controls()
+        self._setup_web_layers()
         self._load_page()
 
         self.resolution_requested.connect(self.apply_resolution_preset)
@@ -281,6 +295,39 @@ class AzurJuusWindow(QMainWindow):
             }
             """
         )
+
+    def _setup_web_layers(self):
+        self._web_channel = QWebChannel(self._page)
+        self._desktop_layers = DesktopLayers(self)
+        self._web_channel.registerObject('desktopLayers', self._desktop_layers)
+        self._page.setWebChannel(self._web_channel, QWebEngineScript.ApplicationWorld)
+        library = QFile(':/qtwebchannel/qwebchannel.js')
+        if not library.open(QFile.ReadOnly):
+            raise RuntimeError('Qt WebChannel runtime is unavailable')
+        source = bytes(library.readAll()).decode('utf-8')
+        library.close()
+        script = QWebEngineScript()
+        script.setName('AzurJuusDesktopLayers')
+        script.setWorldId(QWebEngineScript.ApplicationWorld)
+        script.setInjectionPoint(QWebEngineScript.DocumentReady)
+        script.setRunsOnSubFrames(False)
+        script.setSourceCode(source + """
+          new QWebChannel(qt.webChannelTransport, channel => {
+            let previous;
+            const update = () => {
+              const active = [...document.querySelectorAll('.drawer-scrim, .modal-scrim, [aria-modal="true"]')]
+                .some(element => element.getClientRects().length > 0);
+              if (active !== previous) {
+                previous = active;
+                channel.objects.desktopLayers.setOverlayActive(active);
+              }
+            };
+            new MutationObserver(update).observe(document.body, {childList:true, subtree:true, attributes:true,
+              attributeFilter:['class','style','hidden']});
+            update();
+          });
+        """)
+        self._page.scripts().insert(script)
 
     def _load_page(self):
         self._view.setUrl(QUrl(self.base_url))

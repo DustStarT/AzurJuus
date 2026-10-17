@@ -99,6 +99,6 @@ class SocialActivity:
             s.add(SocialTopic(id=tid, conversation_id=cid, status='active', version=0,
                 data={'runId': None, 'sourceMessageId': source_id, 'proactive': True,
                     'prompt': '看看近期可见交流中是否还有值得接续的话题。有自己的想法才开口，不重复回答、不强行热场；没有则沉默。',
-                    'spoken': 0, 'invites': 0, 'recent': []}))
+                    'spoken': 0, 'invites': 0, 'recent': [], 'maxSpoken': 6}))
         revision = self.revision
         await e.exchange(tid, is_busy=lambda: bool(e.c.tasks) or self.revision != revision, background=True)

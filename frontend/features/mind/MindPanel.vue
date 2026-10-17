@@ -83,8 +83,6 @@ onUnmounted(() => { active = false; clearTimeout(timer); unsubscribeDomain?.(); 
     <PersonalLife :actor-id="actorId" :view="view" />
     <p v-if="error" class="error-message">{{ error }}</p>
     <p v-if="mind?.error" class="muted">认知更新暂不可用，聊天与任务仍可继续。</p>
-    <label><input type="checkbox" :checked="mind?.enabled" @change="action('mind', {enabled:($event.target as HTMLInputElement).checked})"> 使用持续经历与关系</label>
-    <p class="muted">{{ mind?.anchor.note }}</p>
     <template v-if="view==='state'">
     <h3>心境与情绪</h3><p>{{mind?.data.mindMood?.text || '尚未形成持续心境'}}</p>
     <p v-if="mind?.data.emotion">{{mind.data.emotion.name}} · {{mind.data.emotion.target}}：{{mind.data.emotion.cause}}</p>
@@ -95,14 +93,12 @@ onUnmounted(() => { active = false; clearTimeout(timer); unsubscribeDomain?.(); 
     <p v-for="item in mind?.data.commitments || []" :key="item.sourceId + item.text">{{ item.text }}</p>
     </template><template v-if="view==='background'">
     <h3>原作资料理解</h3>
-    <p class="muted">模型依据剧情、聊天或动态整理的背景，不是她在本应用亲身经历的事。</p>
     <article v-for="item in mind?.originalBackground || []" :key="item.source+item.quote" class="assignment">
       <p>{{item.text}}</p><details><summary>查看原文依据</summary><blockquote>{{item.quote}}</blockquote><a :href="item.source" target="_blank" rel="noreferrer">打开资料</a></details>
     </article>
     <p v-if="!mind?.originalBackground?.length" class="muted">尚无已核对的背景整理。</p>
-    </template><template v-if="view==='relationships' || view==='experiences'">
+    </template><template v-if="view==='relationships'">
     <h3>关系与共同经历</h3>
-    <p class="muted">这里记录的是她对同伴的认识，双方不必相同。你可以设定既有关系；设定不会伪装成真实任务经历。</p>
     <article v-for="peer in relations" :key="peer.peerId" class="assignment">
       <strong>{{ peer.name }}</strong><p>{{ peer.summary }}</p>
       <button class="text-button" @click="relationshipEdit = peer.peerId; relationshipText = peer.userDefined || ''">设定关系</button>
@@ -112,8 +108,7 @@ onUnmounted(() => { active = false; clearTimeout(timer); unsubscribeDomain?.(); 
         <button class="primary-button">保存关系</button>
       </form>
     </article>
-    </template><template v-if="view==='experiences'"><h3>个人经历与见闻</h3>
-    <p class="muted">这里包含本人的行动，以及在可见对话中听到的消息；听到别人发言不代表本人说过这句话。删除聊天只隐藏聊天记录；忘记经历会同时排除相关判断和承诺，保留任务审计事实。</p>
+    </template><template v-if="view==='experiences' && experiences.length"><h3>个人经历与见闻</h3>
     <article v-for="item in experiences" :key="item.id" class="assignment">
       <small v-if="experienceLabel(item)" class="muted">{{ experienceLabel(item) }}</small>
       <p>{{ item.text }}</p><p v-if="item.data.userCorrection">你的纠正：{{ item.data.userCorrection }}</p>
@@ -125,6 +120,10 @@ onUnmounted(() => { active = false; clearTimeout(timer); unsubscribeDomain?.(); 
     </article>
     <button v-if="cursor" class="text-button" @click="more">更早的经历</button>
     </template>
-    <details><summary>清除成长状态</summary><p>清除个人经历、关系推断与承诺，保留原作设定、任务证据与技能。</p><button class="text-button danger" @click="action('mind', {reset:true})">清除这个人物的成长状态</button></details>
+    <details class="mind-management"><summary>记忆管理</summary>
+      <div class="mind-toolbar"><label><input type="checkbox" :checked="mind?.enabled" @change="action('mind', {enabled:($event.target as HTMLInputElement).checked})">持续经历与关系</label></div>
+      <p>清除个人经历、关系推断与承诺，保留原作设定、任务证据与技能。</p>
+      <button class="text-button danger" @click="action('mind', {reset:true})">清除这个人物的成长状态</button>
+    </details>
   </section>
 </template>

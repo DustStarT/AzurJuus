@@ -238,6 +238,16 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.moments-replies {
+  margin: -6px 0 18px 44px;
+  padding: 12px 12px 1px;
+  border-left: 2px solid var(--line);
+  border-radius: 0 8px 8px 0;
+  background: #86a9c40d;
+}
+.moments-comment--reply { margin-bottom: 12px; }
+.moments-comment--reply .avatar { width: 28px; height: 28px; }
+.moments-reply-target { margin-left: 8px; font-size: 11px; color: var(--muted); }
 .moment-footer {
   padding: 8px 16px 12px;
   border-top: 1px solid var(--line);

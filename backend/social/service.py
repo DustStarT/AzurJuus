@@ -91,14 +91,14 @@ class SocialService:
         post.liked_by_user = not bool(existing)
         return self.build_snapshot(session)
 
-    def add_comment(self, session: Session, post_id: str, body: str) -> dict[str, Any]:
+    def add_comment(self, session: Session, post_id: str, body: str, reply_to_id: str | None = None) -> dict[str, Any]:
         post = session.get(SocialPost, post_id)
         if post is None or not self.post_visible(session, post, DEFAULT_USER['id']):
             raise ValueError('动态不可见。')
         content = str(body or "").strip()
         if not content or len(content) > 1000:
             raise ValueError('评论长度须为 1 至 1000 字。')
-        comment=self._create_social_comment(session, post=post, author_id=DEFAULT_USER["id"], body=content)
+        comment=self._create_social_comment(session, post=post, author_id=DEFAULT_USER["id"], body=content, reply_to_id=reply_to_id)
         session.info['created_social_comment_id']=comment.id
         session.flush()
         return self.build_snapshot(session)
@@ -142,7 +142,7 @@ class SocialService:
             'mode':mode}
 
     def actor_react(self, session: Session, post_id: str, actor_id: str, action: str,
-                    body: str = '') -> bool:
+                    body: str = '', *, reply_to_id: str | None = None) -> bool:
         from backend.characters.character_identity import roster_actors
         post=session.get(SocialPost,post_id)
         actor=session.get(Actor,actor_id)
@@ -164,7 +164,7 @@ class SocialService:
             prior=session.scalars(select(SocialComment).where(SocialComment.post_id==post_id,
                 SocialComment.author_id==actor_id)).all()
             if len(prior)>=2:return False
-            self._create_social_comment(session,post=post,author_id=actor_id,body=content)
+            self._create_social_comment(session,post=post,author_id=actor_id,body=content,reply_to_id=reply_to_id)
         else:return False
         return True
 
@@ -206,13 +206,19 @@ class SocialService:
             source_kind='social.post',text=content)
         return post
 
-    def _create_social_comment(self, session: Session, *, post: SocialPost, author_id: str, body: str) -> SocialComment:
+    def _create_social_comment(self, session: Session, *, post: SocialPost, author_id: str, body: str,
+                               reply_to_id: str | None = None) -> SocialComment:
+        if reply_to_id:
+            parent = session.get(SocialComment, reply_to_id)
+            if not parent or parent.post_id != post.id:
+                raise ValueError('被回复的评论不存在或不属于这条动态。')
         content = " ".join(str(body or "").split())
         comment = SocialComment(
             id=f"comment-{uuid4().hex[:12]}",
             post_id=post.id,
             author_id=author_id,
             body=content,
+            reply_to_id=reply_to_id or None,
         )
         session.add(comment)
         session.flush()

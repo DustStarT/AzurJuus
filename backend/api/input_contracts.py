@@ -66,6 +66,7 @@ class AudienceInput(Input):
 
 class PostInput(Input):
     postId: Id = ''
+    replyToId: Id | None = None
     authorId: Id | None = None
     body: Text = ''
     mediaUrl: Annotated[str, Field(max_length=4000)] | None = None
@@ -105,6 +106,7 @@ class WorkspaceSettingsInput(Input):
     chatTimeoutSeconds: int = Field(default=120, ge=1, le=86400, strict=False)
     runTimeoutSeconds: int = Field(default=3600, ge=1, le=86400, strict=False)
     maxTaskMembers: int = Field(default=12, ge=1, le=24, strict=False)
+    dialoguePreset: Literal['compact', 'balanced', 'rich'] = 'balanced'
 
     @field_validator('chatTimeoutSeconds', 'runTimeoutSeconds', 'maxTaskMembers', mode='before')
     @classmethod

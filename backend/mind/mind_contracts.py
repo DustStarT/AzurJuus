@@ -56,6 +56,25 @@ class DecisionIntent(Record):
     goalUpdate: GoalUpdate | None = None
 
 
+class CompactFrame(Record):
+    interpretation: str = Field(max_length=500)
+    unknowns: list[str] = Field(default_factory=list, max_length=3)
+    sourceIds: list[str] = Field(default_factory=list, max_length=8)
+    emotion: Emotion = Field(default_factory=Emotion)
+
+
+class CompactIntent(Record):
+    action: str = Field(max_length=30)
+    purpose: str = Field(min_length=1, max_length=300)
+    sourceIds: list[str] = Field(default_factory=list, max_length=8)
+
+
+class CompactThought(Record):
+    frame: CompactFrame
+    intent: CompactIntent
+    needsFullChain: bool = False
+
+
 class Belief(Record):
     text: str = Field(min_length=1, max_length=400)
     kind: Literal['belief','habit','relationship','method'] = 'belief'

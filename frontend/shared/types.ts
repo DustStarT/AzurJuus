@@ -31,7 +31,7 @@ export interface Message {
   body: string;
   type: string;
   createdAt: string;
-  metadata?: { runId?: string; expression?: boolean; segments?: string[]; sourceIds?: string[]; routeKind?: string;
+  metadata?: { runId?: string; requestId?: string; expression?: boolean; segments?: string[]; sourceIds?: string[]; routeKind?: string;
     routeProposal?: {requestId:string;actorIds:string[];summary:string;status:string};
     attachments?:{id:string;name:string;mime:string;conversationId:string}[] };
 }
@@ -46,7 +46,7 @@ export interface Post {
   mediaUrl?: string;
   likes: number;
   likedByUser: boolean;
-  comments: { id: string; authorId: string; body: string }[];
+  comments: { id: string; authorId: string; body: string; replyToId?: string | null }[];
   createdAt: string;
 }
 export interface Artifact {
@@ -134,6 +134,7 @@ export interface Settings {
   visionEnabled: boolean;
   characterRosterText: string;
   resolutionPreset: string;
+  dialoguePreset?: 'compact' | 'balanced' | 'rich';
 }
 export interface Snapshot {
   user: Agent;

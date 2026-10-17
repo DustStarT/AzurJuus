@@ -41,6 +41,7 @@ def install_moment_routes(app, service, publish):
                     session,
                     post_id=str(payload.get("postId") or ""),
                     body=str(payload.get("body") or ""),
+                    reply_to_id=payload.get('replyToId'),
                 )
                 comment_id=session.info.get('created_social_comment_id')
         except ValueError as error:

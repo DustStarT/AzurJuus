@@ -303,9 +303,30 @@ class Cognition:
         return result
 
     def context(self, actor_id, query='', peers=None, social=False, include_task_history=True,
-                task_run_id='', include_prior_task_history=False):
+                task_run_id='', include_prior_task_history=False, conversation_id=''):
         if not self.enabled:
             return ''
+        shared = getattr(self.store, 'context_service', None)
+        if shared:
+            from backend.context.contracts import ContextRequest
+            bundle = shared.collect(ContextRequest(actor_id, conversation_id,
+                mode='social' if social else 'task' if task_run_id else 'chat', query=query,
+                run_id=task_run_id, public=social,
+                include_task_history=include_task_history,
+                include_prior_task_history=include_prior_task_history,
+                preset=shared.settings_loader().get('dialoguePreset', 'balanced')))
+            state = self.inspect(actor_id)
+            if not state['enabled']:
+                return ''
+            allowed = set(bundle.allowed_sources)
+            relations = [r for r in self.relationships(actor_id) if peers is None or r['peerId'] in peers]
+            return json.dumps({'rules': bundle.rules, 'evidence': bundle.experiences + bundle.documents,
+                'reference': bundle.reference, 'traceId': bundle.trace_id,
+                'focus': [] if social else [v for v in state['data'].get('focus', []) if v.get('sourceId') in allowed],
+                'commitments': [] if social else [v for v in state['data'].get('commitments', []) if v.get('sourceId') in allowed],
+                'relationships': [{'peerId': r['peerId'], 'name': r['name'], 'background': r['background'],
+                    'userDefinedRelationship': r['userDefined']} for r in relations[:6]],
+                'originalBackground': state.get('originalBackground', [])[:4]}, ensure_ascii=False)
         try:
             state = self.inspect(actor_id)
             if not state['enabled']:

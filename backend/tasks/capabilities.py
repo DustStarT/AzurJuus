@@ -14,6 +14,9 @@ from uuid import uuid4
 
 
 CATALOG = {
+    'search_context': 'Search already visible document fragments, task evidence, experiences and cached Wiki: query. Does not read disk or prove personal reading.',
+    'read_context_source': 'Read a previously retrieved visible source by sourceId, offset and limit characters. Does not read disk or grant access.',
+    'index_document': 'Only when the user explicitly requests full indexing: path. Reads all pages/paragraphs/rows through the same authorized read gateway and indexes returned fragments. Does not scan directories.',
     'method_search': 'Search your visible, enabled methods: query string, limit 1-20. Does not choose a method or grant tools.',
     'method_select': 'Choose or combine 1-4 method ids returned by method_search: ids [strings]. Returns actual method instructions. Does not grant tools.',
     'method_evolve': 'Propose an improved personal method from your verified task evidence: name, summary, patch, basedOn [method ids], sourceRunId, cases [3 distinct isolated acceptance scenarios]. Never enables the candidate; secretary and user must confirm the trial specification.',
@@ -47,9 +50,9 @@ def phase_actions(phase):
     if phase == "chat" or phase.startswith("discussion_"):
         return []
     if phase == "planner":
-        return ["delegate", "execution_history", "method_search", "method_select"]
+        return ["delegate", "execution_history", "method_search", "method_select", "search_context", "read_context_source"]
     if phase == "reviewer":
-        return ["read_file", "read_document", "read_image", "search", "list_dir", "deliver", "execution_history", "method_search", "method_select"]
+        return ["read_file", "read_document", "read_image", "search", "list_dir", "deliver", "execution_history", "method_search", "method_select", "search_context", "read_context_source"]
     return [name for name in CATALOG if name != "delegate"]
 
 

@@ -341,6 +341,13 @@ def test_proactive_topic_requires_online_activity_and_does_not_replay(world):
     assert not e.activity.reserve(topic=True)
 
 
+def test_proactive_topic_budget_is_capped_even_for_legacy_rows(world):
+    e, _, _, _ = setup_social_topic(world)
+    assert e.topic_limit({'proactive': True, 'maxSpoken': 6}) == 6
+    assert e.topic_limit({'proactive': False, 'maxSpoken': 6}) == 6
+    assert e.topic_novelty('我也同意，甜甜圈确实很好吃。', ['甜甜圈确实很好吃。']) == 0.0
+
+
 def test_idle_activity_does_not_open_topic(world):
     e,_,_,_=setup_social_topic(world)
     e.enabled=True
@@ -565,8 +572,9 @@ def test_group_respects_auto_reply_budget_even_if_agents_keep_asking(world):
             'sourceIds':[source],'replyTo':last['id'] if last else None,'mentions':[]}
     e.decide=speak
     asyncio.run(e._exchange(t['id']))
-    assert len(calls)==6
-    assert calls[-1][1]['openQuestion']['text']=='第5次接话？'
+    assert len(calls)==e.topic_limit(t)
+    assert calls[-1][1]['openQuestion']['text']==f'第{len(calls)-1}次接话？'
+    assert e.topic(t['id'])['status']=='waiting'
 
 
 def test_model_retries_inviting_an_existing_member_before_commit(world):

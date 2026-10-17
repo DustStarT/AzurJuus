@@ -112,9 +112,6 @@ onUnmounted(() => {
           ><span>{{ control.end }}</span></small
         >
       </label>
-      <p class="muted">
-        沿图片可裁切的方向调整位置；想移动更多，可先放大。仅调整当前角色，自动保存到本机。
-      </p>
       <button type="button" class="text-button" @click="reset">
         恢复默认构图
       </button>

@@ -234,7 +234,7 @@ class MomentsRuntime:
                 if daily['interactions'].get(actor_id,0)>=cfg['momentsActorDailyInteractions'] or sum(daily['interactions'].values())>=cfg['momentsDailyInteractions']:
                     self._finish(key,actor_id)
                     continue
-                await self._attempt(key,actor_id,lambda: self._interact(actor_id,post.id,key,comment.body,comment.author_id))
+                await self._attempt(key,actor_id,lambda: self._interact(actor_id,post.id,key,comment.body,comment.author_id,comment.id))
                 return
             actor_id=identifier if kind=='thought' else ''
             event=None
@@ -377,7 +377,7 @@ class MomentsRuntime:
         self.notify_post(post_id)
         return 'post'
 
-    async def _interact(self,actor_id,post_id,key,comment='',comment_author_id=''):
+    async def _interact(self,actor_id,post_id,key,comment='',comment_author_id='',comment_id=None):
         revision=self.runtime.revision
         with session_scope() as session:
             post=session.get(SocialPost,post_id)
@@ -410,7 +410,8 @@ class MomentsRuntime:
         with session_scope() as session:
             if self.runtime.background_blocked(revision):return 'wait'
             before=session.scalars(select(SocialComment).where(SocialComment.post_id==post_id)).all()
-            changed=self.service.actor_react(session,post_id,actor_id,'comment' if action=='speak' else 'like',text)
+            changed=self.service.actor_react(session,post_id,actor_id,'comment' if action=='speak' else 'like',text,
+                reply_to_id=comment_id if action=='speak' else None)
             if changed:self._count_in_session(session,actor_id,'interactions')
             after=session.scalars(select(SocialComment).where(SocialComment.post_id==post_id)).all() if changed and action=='speak' else []
             new_id=next((c.id for c in after if c.id not in {b.id for b in before}),None)

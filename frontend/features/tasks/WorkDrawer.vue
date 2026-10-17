@@ -23,6 +23,12 @@ const error = ref(""),
   helperReason = ref("");
 const outputs = computed(() => projected.value?.outputs ?? {});
 const transcripts = ref<{seq:number;actorId:string;text:string}[]>([]);
+type ReadSource={sourceId:string;title:string;data:{path:string;readerId:string;location:Record<string,unknown>}};
+const readSources=ref<ReadSource[]>([]);
+async function indexFull(path:string){if(!props.run)return;busy.value=true;error.value='';
+  try{const result=await api<{runId:string;conversationId:string}>('/api/context/index-document',
+    {conversationId:props.run.conversationId,path});emit('changed');emit('select',result.runId);}
+  catch(e){error.value=(e as Error).message;}finally{busy.value=false;}}
 const statuses: Record<string, string> = {
   queued: "排队中",
   running: "正在执行",
@@ -74,13 +80,15 @@ async function load() {
   const generation = ++loadGeneration;
   if (runId) {
     try {
-      const [detail, transcript] = await Promise.all([
+      const [detail, transcript, sourceData] = await Promise.all([
         api<WorkflowDetail>(`/api/runs/${runId}`),
         api<{records:typeof transcripts.value}>(`/api/runs/${runId}/transcripts`),
+        api<{sources:ReadSource[]}>(`/api/context/runs/${runId}/sources`),
       ]);
       if (generation !== loadGeneration || props.run?.id !== runId) return;
       kernel!.hydrateDetail(detail);
       transcripts.value = transcript.records;
+      readSources.value = sourceData.sources;
       error.value = "";
     } catch (e) {
       if (generation !== loadGeneration) return;
@@ -214,8 +222,7 @@ async function removeRecords(all = false) {
     >
       <header class="drawer-header">
         <div>
-          <span class="eyebrow">OPERATIONS / 港区协作</span>
-          <h2>工作记录<span class="small-dot"></span></h2>
+          <h2>工作记录</h2>
         </div>
         <button
           class="icon-button"
@@ -241,7 +248,7 @@ async function removeRecords(all = false) {
       <div v-if="!run" class="empty-state">
         <Icon name="activity" :size="44" />
         <h3>从一句委托开始</h3>
-        <p>切换到任务模式，把想完成的事情交给港区伙伴。</p>
+        <p>选择任务模式开始委托。</p>
       </div>
       <template v-else>
         <div class="run-overview">
@@ -437,7 +444,15 @@ async function removeRecords(all = false) {
             </details>
           </div>
           <template v-if="tab === 'tools'"
-            ><div v-if="!calls.length" class="quiet-note">
+            ><details v-if="readSources.length" class="tool-record">
+              <summary>实际阅读与索引范围 · {{readSources.length}} 个片段</summary>
+              <p class="quiet-note">以下范围来自工具实际返回内容，均保留为读取时的版本；索引不代表通读全文。</p>
+              <article v-for="source in readSources" :key="source.sourceId">
+                <strong>{{source.title}}</strong>
+                <p>{{agents.find(a=>a.id===source.data.readerId)?.name || '成员'}} · {{JSON.stringify(source.data.location)}}</p>
+                <button type="button" class="text-button" :disabled="busy" @click="indexFull(source.data.path)">通过授权任务索引全文</button>
+              </article>
+            </details><div v-if="!calls.length" class="quiet-note">
               工具执行后会在这里留下真实记录。
             </div>
             <details v-for="call in calls" :key="call.id" class="tool-record">

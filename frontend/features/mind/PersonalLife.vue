@@ -63,7 +63,7 @@ onUnmounted(()=>{active=false;window.removeEventListener('azur-mind-changed',cha
   <section aria-label="持续人物心智">
     <p v-if="error" class="error-message" role="alert">{{ error }}</p>
     <template v-if="view==='background'">
-      <h3>人格资料解释</h3><p class="muted">背景塑造注意、取舍与方法，不需要在每次对话里复述。原作身份与核心价值不会在生活中被自动改写。</p>
+      <h3>人格资料解释</h3>
       <p v-if="profile?.status==='pending'" class="muted">等待下一次认知调用整理资料；查看此页不会调用模型。</p>
       <template v-if="!editing"><div v-for="field in fields" :key="field.key"><h4>{{field.label}}</h4><p>{{display(profile?.interpretation[field.key]) || '尚未整理'}}</p></div>
         <button class="soft-button" @click="editing=true">编辑人格解释</button></template>
@@ -72,7 +72,7 @@ onUnmounted(()=>{active=false;window.removeEventListener('azur-mind-changed',cha
       <button class="text-button" :disabled="busy" @click="saveProfile(true)">恢复为依据资料重新整理</button>
     </template>
     <template v-if="view==='goals'">
-      <h3>个人长期目标</h3><p class="muted">最多三个活跃目标。活动记录是模拟生活的进展依据，不代表真实工具成果。</p>
+      <h3>个人长期目标</h3>
       <article v-for="goal in goals" :key="goal.id" class="assignment"><strong>{{goal.title}}</strong> · {{labels[goal.status] || goal.status}}
         <p>{{goal.motivation}}</p><p>下一步：{{goal.nextStep}}</p><p v-if="goal.reason">原因：{{goal.reason}}</p><p class="muted">已记录 {{goal.evidence?.length || 0}} 条进展依据</p>
         <button class="text-button" @click="draft={id:goal.id,title:goal.title,motivation:goal.motivation,nextStep:goal.nextStep,status:goal.status,reason:goal.reason || ''}">编辑或暂停</button></article>
@@ -96,7 +96,7 @@ onUnmounted(()=>{active=false;window.removeEventListener('azur-mind-changed',cha
       <article v-for="(b,i) in beliefs.filter(b=>(view==='relationships')===(b.kind==='relationship'))" :key="i" class="assignment"><p>{{b.text}}</p><small class="muted">{{b.kind==='habit' && !b.stable ? '习惯候选，证据不足以视为稳定变化' : '可修正的判断'}} · {{b.sourceIds.length}} 条依据</small></article>
     </template>
     <template v-if="view==='experiences'">
-      <h3>生活记录</h3><p class="muted">这些是在线发生的模拟活动。你在此观察不会让其他人物自动知情。</p>
+      <h3>生活记录</h3>
       <article v-for="event in events" :key="event.id" class="assignment"><small>{{new Date(event.at*1000).toLocaleString()}} · 模拟生活<span v-if="event.kind==='dialogue'"> · {{event.actorId===props.actorId ? '本人发言' : '同伴发言'}}</span></small><p>{{event.text}}</p></article>
       <p v-if="!events.length" class="muted">还没有生活事件。</p><button v-if="cursor" class="text-button" @click="more">更早的生活记录</button>
     </template>

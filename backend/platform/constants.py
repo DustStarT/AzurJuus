@@ -38,6 +38,9 @@ DEFAULT_SETTINGS = {
     "secretaryAgentId": "",
     "allowIdleSocial": True,
     "socialIntervalMinutes": 60,
+    # Dialogue budget is a user preference.  The compact preset keeps the
+    # same persona contract while shortening history and output envelopes.
+    "dialoguePreset": "balanced",
 }
 
 WALLPAPERS = [

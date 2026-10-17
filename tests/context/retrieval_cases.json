@@ -1,0 +1,22 @@
+[
+  {"file":"航海 札记.pdf","text":"远航船员通过每周写信保持联系，交换港口见闻。书信让离家的人感受到陪伴。","queries":["长期在海上工作的人如何与家人保持感情？","How do sailors stay close to their families during long voyages?"]},
+  {"file":"阳台 花园.pdf","text":"阳台上种植薄荷和罗勒，需要阳光与排水良好的土壤。浇水前先检查盆土的湿度。","queries":["在公寓的露台栽培香草应该注意什么？","Growing mint and basil in pots outside an apartment."]},
+  {"file":"面包 发酵.pdf","text":"制作酸面包时，天然酵母需要定期喂养。面团在温暖环境缓慢发酵，烘烤前应观察膨胀程度。","queries":["为什么制作酸种面包要照顾菌种？","How to maintain a sourdough starter and let dough rise."]},
+  {"file":"星空 观察.pdf","text":"天文爱好者使用望远镜观察木星和土星。远离城市灯光能让微弱的星云更加清晰。","queries":["想看清行星与星云，需要避开什么环境？","Observing Jupiter and Saturn with a telescope under dark skies."]},
+  {"file":"自行车 维护.pdf","text":"自行车链条沾满灰尘会影响变速。先清洁传动系统，再涂少量润滑油，最后检查刹车。","queries":["骑车时换挡不顺，传动部分该怎么保养？","Cleaning and lubricating a bicycle drivetrain and checking brakes."]},
+  {"file":"咖啡 手冲.pdf","text":"手冲咖啡的风味受研磨粗细、水温和注水速度影响。过度萃取容易出现苦涩，适当调整粉水比例。","queries":["冲出来的咖啡很苦，哪些萃取条件值得调整？","Adjusting grind size and water temperature for pour over coffee."]},
+  {"file":"摄影 曝光.pdf","text":"摄影曝光由光圈、快门和感光度共同决定。拍摄运动的人物时，提高快门速度可以减少拖影。","queries":["拍跑步者总是模糊，该调整相机哪个参数？","Freezing moving subjects by choosing a faster shutter speed."]},
+  {"file":"吉他 和弦.pdf","text":"练习吉他和弦转换时先放慢节奏。手指靠近品丝，保持每根琴弦发声清晰，再逐渐提高速度。","queries":["初学弹六弦琴时，怎样让不同和弦切换更顺？","Practicing clean guitar chord changes slowly before speeding up."]},
+  {"file":"陶艺 拉坯.pdf","text":"陶艺拉坯需要先让黏土在转盘中心稳定。双手保持湿润并均匀施力，逐渐拉高杯壁。","queries":["在旋转的台子上制作泥杯，如何避免歪斜？","Centering wet clay on a pottery wheel before shaping a cup."]},
+  {"file":"棋局 分析.pdf","text":"国际象棋开局应控制中心并尽早发展轻子。王车易位能保护国王，避免过早反复移动同一枚棋子。","queries":["下西洋棋的开局为什么要争夺中央位置？","Chess opening principles: develop pieces and castle for king safety."]},
+  {"file":"露营 装备.pdf","text":"野外露营应检查帐篷防雨性能和睡袋保暖范围。选择平坦、远离落石与积水的营地。","queries":["准备在山里过夜，帐篷和营地位置怎么选择？","Choosing a dry campsite and packing a rainproof tent and sleeping bag."]},
+  {"file":"水族箱 生态.pdf","text":"水族箱过滤系统帮助建立稳定的硝化细菌群落。换水时避免一次更换全部水体，关注鱼缸温度。","queries":["养观赏鱼时，为什么不能把缸里的水全部换掉？","Maintaining beneficial bacteria and stable water in an aquarium."]},
+  {"file":"木工 榫卯.pdf","text":"木工制作抽屉时使用榫卯连接能提高牢固程度。切割前精确测量，组装时检查各角是否垂直。","queries":["不用大量金属钉，怎样把木抽屉接得更牢？","Building a sturdy wooden drawer using mortise and tenon joints."]},
+  {"file":"地图 定向.pdf","text":"户外定向使用等高线地图与指南针。先辨认地形和北方方向，再根据明显地标校正路线。","queries":["徒步时迷失方向，如何配合地形图与罗盘定位？","Navigating terrain with a compass, contour map and visible landmarks."]},
+  {"file":"茶叶 冲泡.pdf","text":"绿茶冲泡温度通常比红茶低。茶叶用量与浸泡时间影响浓淡，避免长时间闷泡产生苦味。","queries":["泡绿茶苦涩，浸泡与水温有什么关系？","Brewing green tea with cooler water and shorter steeping time."]},
+  {"file":"程序 缓存.pdf","text":"程序缓存的键必须包含角色编号和频道权限版本。撤销访问时立即失效，防止旧缓存泄露私人数据。","queries":["不同用户共享缓存时，怎样避免读到他人的私密内容？","Invalidating cached results after access permissions are revoked."]},
+  {"file":"语言 学习.pdf","text":"学习外语可以使用间隔重复记忆词汇，并通过听力材料在具体情境中练习。短时间每天练习比临时突击稳定。","queries":["想长期记住新语言的单词，复习应怎样安排？","Learning vocabulary with spaced repetition and daily listening practice."]},
+  {"file":"航模 飞行.pdf","text":"遥控滑翔机起飞前应检查重心与舵面响应。轻柔操纵副翼和升降舵，避免在强侧风中试飞。","queries":["遥控飞机初次飞行前为什么需要核对重心？","Checking the center of gravity and control surfaces of a model glider."]},
+  {"file":"合唱 排练.pdf","text":"合唱排练需要倾听其他声部，统一元音和节拍。分声部练习后再合排，控制呼吸以维持长句。","queries":["多人一起唱歌时，如何协调各个声部和呼吸？","Choir rehearsal: blend vowels, listen to other voices and coordinate breathing."]},
+  {"file":"漫画 分镜.pdf","text":"漫画分镜通过镜头顺序组织故事节奏。近景突出人物表情，远景交代环境，留白可以表现停顿。","queries":["画连环故事时，怎样用画格大小和镜头安排叙事？","Planning comic panels with close ups, wide shots and pauses in storytelling."]}
+]

@@ -128,7 +128,8 @@ def test_author_can_reply_to_peer_comment_without_calling_peer_user(mind,monkeyp
         peer_name=peer.name
         post=coordinator.moments.service._create_social_post(session,author=author,body='想尝尝布丁。')
         post_id=post.id
-        coordinator.moments.service._create_social_comment(session,post=post,author_id=peer_id,body='焦糖的也不错。')
+        parent=coordinator.moments.service._create_social_comment(session,post=post,author_id=peer_id,body='焦糖的也不错。')
+        parent_id=parent.id
         assert not coordinator.moments.service.actor_react(session,post_id,author_id,'like')
     monkeypatch.setattr(runtime,'background_blocked',lambda *args,**kwargs:False)
     monkeypatch.setattr(runtime,'profile',lambda actor:{'interpretation':{}})
@@ -136,10 +137,12 @@ def test_author_can_reply_to_peer_comment_without_calling_peer_user(mind,monkeyp
     call=AsyncMock(return_value=CommentDraft(body='那就先试试焦糖的～'))
     monkeypatch.setattr(runtime,'think',think)
     monkeypatch.setattr(runtime,'call',call)
-    assert asyncio.run(coordinator.moments._interact(author_id,post_id,'comment:test','焦糖的也不错。',peer_id))=='interaction'
+    assert asyncio.run(coordinator.moments._interact(author_id,post_id,'comment:'+parent_id,'焦糖的也不错。',peer_id,parent_id))=='interaction'
     assert '评论作者：'+peer_name in think.await_args.args[2]
     payload=call.await_args.args[2]
     assert payload['postAuthor']['id']==author_id and payload['commentAuthor']['id']==peer_id
     with session_scope() as session:
         comments=session.scalars(select(SocialComment).where(SocialComment.post_id==post_id)).all()
         assert {comment.author_id for comment in comments}=={author_id,peer_id}
+        reply=next(comment for comment in comments if comment.author_id==author_id)
+        assert reply.reply_to_id==parent_id

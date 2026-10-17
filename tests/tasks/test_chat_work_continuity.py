@@ -53,7 +53,7 @@ def test_two_recent_books_require_clarification(world):
     assert named['runId']==second['id']
 
 
-def test_group_followup_prioritizes_member_who_read_the_book(world):
+def test_group_followup_does_not_use_private_read_evidence(world):
     coordinator, _, ids = world
     reader = ids[0]
     _finished_read(coordinator, reader, 'dm-' + reader,
@@ -63,8 +63,8 @@ def test_group_followup_prioritizes_member_who_read_the_book(world):
             session.get(Conversation, 'port-hub'), 'commander', 'text',
             '你觉得这本书写得怎么样？', message_id='group-book-followup')
     room = coordinator.social_engine.snapshot('port-hub')
-    assert coordinator.social_engine.candidates(room, {'id':'book-topic','prompt':'你觉得这本书写得怎么样？',
-        'spoken':0, 'recent':[]})[0]['id'] == reader
+    assert resolve_task_reference(coordinator.store, reader, '你觉得这本书写得怎么样？',
+        conversation_id='port-hub', public=True) is None
 
 
 def test_verified_read_survives_work_drawer_removal_until_actor_forgets(world):
@@ -93,6 +93,22 @@ def test_verified_read_survives_work_drawer_removal_until_actor_forgets(world):
     coordinator.cognition.revise(ids[0], experience_id, forget=True)
     assert resolve_task_reference(coordinator.store, ids[0], '你觉得这本书怎么样？') is None
     assert resolve_task_reference(coordinator.store, ids[1], '你觉得这本书怎么样？') is None
+
+
+def test_verified_outcome_recovers_followup_when_memory_chunk_was_not_written(world):
+    coordinator, _, ids = world
+    read = _finished_read(coordinator, ids[0], 'dm-' + ids[0],
+        '故障恢复.pdf', '前十页讨论了任务与闲聊之间的联系。')
+    sources = __import__('backend.chat.task_reference', fromlist=['read_sources']).read_sources(
+        coordinator.store, read, ids[0])
+    with session_scope() as session:
+        session.add(Experience(id='outcome-recovery', actor_id=ids[0], run_id=read['id'],
+            source_seq=1, kind='outcome', text='任务状态：completed。前十页讨论了任务与闲聊之间的联系。',
+            at=1, forgotten=False,
+            data={'verified': True, 'readSources': sources}))
+    linked = resolve_task_reference(coordinator.store, ids[0], '你觉得这本书怎么样？')
+    assert linked and linked['runId'] == read['id']
+    assert linked['readSources'][0]['name'] == '故障恢复.pdf'
 
 
 def test_busy_actor_mention_is_deferred_without_changing_task(world, monkeypatch):

@@ -136,6 +136,7 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
         if settings.social_enabled:
             social_task = asyncio.create_task(run_social_loop(), name="azurjuus-idle-social")
         await app.state.runs.start()
+        await app.state.runs.context.start()
         cognition_task = asyncio.create_task(run_cognition_loop(), name='azurjuus-maintenance')
         try:
             yield
@@ -148,6 +149,7 @@ def create_app(runtime_context: dict[str, Any] | None = None) -> FastAPI:
                 social_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await social_task
+            await app.state.runs.context.close()
             await app.state.runs.close()
             await hub.stop()
 

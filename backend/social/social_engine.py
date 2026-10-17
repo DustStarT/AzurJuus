@@ -15,6 +15,7 @@ from backend.chat.expression import validate
 from backend.social.idle_social import _generate, SocialPreempted
 from backend.social.social_activity import SocialActivity
 from backend.chat.message_order import message_order
+from backend.social.conversation_policy import closing_context, closing_violation, repeats_own_speech
 
 
 def stable(*parts):
@@ -53,6 +54,40 @@ class SocialEngine:
     def actor_busy(self, actor_id):
         return actor_id in self.c.busy_actor_ids()
 
+    def dialogue_preset(self):
+        value=str(self.c.settings_loader().get('dialoguePreset') or 'balanced')
+        return value if value in {'compact','balanced','rich'} else 'balanced'
+
+    def dialogue_history_limit(self):
+        return {'compact': 6, 'balanced': 12, 'rich': 18}[self.dialogue_preset()]
+
+    def topic_limit(self, topic):
+        """Return a safety budget; novelty checks usually end topics earlier."""
+        limit=max(1, int(topic.get('maxSpoken', 6) or 6))
+        if not topic.get('proactive'):
+            return limit
+        return min(limit, {'compact':4,'balanced':6,'rich':8}[self.dialogue_preset()])
+
+    @staticmethod
+    def topic_novelty(text, previous):
+        """Estimate whether a reply adds content to the current topic."""
+        import re
+        current=set(re.findall(r'[\u4e00-\u9fff]|[A-Za-z0-9_]+', str(text or '').lower()))
+        if not current or not previous:
+            return 1.0
+        from difflib import SequenceMatcher
+        best_overlap=0.0
+        best_similarity=0.0
+        for item in previous:
+            terms=set(re.findall(r'[\u4e00-\u9fff]|[A-Za-z0-9_]+', str(item or '').lower()))
+            if terms:
+                best_overlap=max(best_overlap, len(current & terms)/max(1,len(current)))
+            best_similarity=max(best_similarity, SequenceMatcher(None,
+                re.sub(r'\W+','',text or ''), re.sub(r'\W+','',item or '')).ratio())
+        if best_overlap >= .60 and best_similarity >= .55:
+            return 0.0
+        return max(0.0, 1.0-best_overlap)
+
     def preempt_actor(self, actor_id):
         for task in list(self.inflight.get(actor_id, ())):
             if not task.done():task.cancel()
@@ -80,7 +115,8 @@ class SocialEngine:
         if stale(): raise SocialPreempted()
         runtime=getattr(self.c.cognition,'runtime',None)
         if runtime and runtime.enabled:
-            return await _generate(runtime.call(topic.get('_actorId',''), 'express', {},
+            return await _generate(runtime.call(topic.get('_actorId',''), 'express',
+                {'contextTraceId': topic.get('_contextTraceId', '')},
                 background=bool(background_busy),revision=runtime.revision,messages=messages,generator=self.generate),stale)
         if background_busy and not self.activity.reserve(): raise SocialPreempted()
         return await _generate(asyncio.wait_for(self.generate(messages,self.c.settings_loader()),15),stale)
@@ -122,6 +158,7 @@ class SocialEngine:
 
     def begin(self, run):
         cid, tid = run['conversationId'], stable(run['id'],'topic')
+        closing = closing_context([], {'prompt': run['prompt']}, [a['id'] for a in run.get('actors', [])])
         with session_scope() as session:
             if session.get(SocialTopic, tid):
                 return tid
@@ -129,7 +166,9 @@ class SocialEngine:
                 .values(status='superseded',version=SocialTopic.version+1))
             session.add(SocialTopic(id=tid,conversation_id=cid,version=0,status='active',
                 data={'runId':run['id'],'prompt':run['prompt'],'spoken':0,'invites':0,'recent':[],
-                    'routeKind':run.get('routeKind',''), 'attachments':run.get('attachments',[])}))
+                    'routeKind':run.get('routeKind',''), 'attachments':run.get('attachments',[]),
+                    **({'maxSpoken': max(6, len(closing['pendingTargets']))}
+                        if closing['closing'] and closing['pendingTargets'] else {})}))
         return tid
 
     def interrupt(self, cid):
@@ -234,8 +273,14 @@ class SocialEngine:
         last_actor=next((a for a in room['members'] if a['id']==last['speakerId']),{})
         last_name=last_actor.get('sourceName',last_actor.get('name'))
         signals={a['id']:self.participation(a, room) for a in room['members'] if a['id']!=last['speakerId']}
+        from backend.context.service import topic_ledger
+        pending_targets = {target for question in topic_ledger(room['history'])['openQuestions'] for target in question['targets']}
+        closing = closing_context(room['history'], topic, [a['id'] for a in room['members']])
+        if closing['closing']:
+            pending_targets.update(closing['pendingTargets'])
         from backend.chat.task_reference import resolve_task_reference
-        evidence = ({a['id']: resolve_task_reference(self.c.store, a['id'], last['text'], room['history'][-6:])
+        evidence = ({a['id']: resolve_task_reference(self.c.store, a['id'], last['text'], room['history'][-6:],
+            conversation_id=room.get('id', ''), public=True)
             for a in room['members'] if a['id'] != last['speakerId']}
             if last['speakerId'] == 'commander' else {})
         # Stable within a turn, varied across topics; retries retain attribution.
@@ -243,7 +288,7 @@ class SocialEngine:
         lottery=random.Random(topic['id']+':'+str(topic.get('spoken',0)))
         jitter={a['id']:lottery.random() for a in sorted(room['members'],key=lambda a:a['id'])}
         def score(a):
-            explicit=a['id'] in last.get('mentions',[]) or a['name'] in last['text'] or a.get('sourceName',a['name']) in last['text']
+            explicit=a['id'] in pending_targets or a['id'] in last.get('mentions',[]) or a['name'] in last['text'] or a.get('sourceName',a['name']) in last['text']
             name=a.get('sourceName',a['name'])
             # After the first reply, current speech and explicit mentions drive
             # participation. Re-ranking by the old user prompt makes everyone
@@ -258,8 +303,24 @@ class SocialEngine:
             return (int(explicit), interest*2+int(known)+continuity+
                 (5 if own_evidence and not own_evidence.get('ambiguous') else 0)
                 -3*recent.count(a['id'])+jitter[a['id']], -recent.count(a['id']))
+        def can_reenter(actor):
+            # A peer mentioning someone is not an invitation to restart that
+            # person's monologue.  A second turn is reserved for an explicit
+            # pending question or a fresh user-directed mention; this stops
+            # alternating "附和 -> 再附和" loops while keeping direct requests.
+            # Autonomous and legacy callers retain their existing safety budget;
+            # the stricter handoff applies to a user chat turn where this loop
+            # was visible in the transcript.
+            if topic.get('routeKind') != 'chat':
+                return True
+            if recent.count(actor['id']) < 1:
+                return True
+            if actor['id'] in pending_targets:
+                return True
+            return last['speakerId'] == 'commander' and actor['id'] in last.get('mentions', [])
         ordered=sorted([a for a in room['members'] if a['id']!=last['speakerId']
             and not self.actor_busy(a['id'])
+            and can_reenter(a)
             and (not topic.get('deferredActorId') or a['id']==topic['deferredActorId'])
             and (a['id'] not in topic.get('withdrawn',[]) or score(a)[0])],key=score,reverse=True)
         if not room['history'] and topic.get('openingActorId'):
@@ -317,13 +378,21 @@ class SocialEngine:
         return None
 
     @staticmethod
-    def conversation_focus(room, topic):
+    def conversation_focus(room, topic, actor_id=None):
         """Current conversational handoff, without repeatedly resetting the topic."""
         history=room['history']
         latest_user=next((m for m in reversed(history) if m['speakerId']=='commander'),None)
         latest=history[-1] if history else None
         question=latest if latest and any(mark in latest['text'] for mark in ('？','?')) else None
-        return {'request':topic['prompt'] if not topic.get('spoken') else None,
+        from backend.context.service import topic_ledger
+        ledger = topic_ledger(history)
+        requested = next((q for q in reversed(ledger['openQuestions']) if actor_id in q['targets']), None)
+        # Utterance text already appears once in the attributed transcript.
+        ledger = {**ledger, 'viewpoints': [{k: v for k, v in h.items() if k != 'text'} for h in ledger['viewpoints']],
+            'openQuestions': [{k: v for k, v in h.items() if k != 'text'} for h in ledger['openQuestions']]}
+        return {'ledger': ledger, 'closing': closing_context(history, topic, [a['id'] for a in room['members']]),
+            'responseTarget': {'id': requested['id'], 'speakerId': requested['speakerId']} if requested else None,
+            'request':topic['prompt'] if not topic.get('spoken') else None,
             'latestUser':{'id':latest_user['id'],'text':latest_user['text']} if latest_user and (not topic.get('spoken') or latest is latest_user) else None,
             'current':{'id':latest['id'],'speakerId':latest['speakerId'],'text':latest['text']} if latest else None,
             'openQuestion':{'id':question['id'],'speakerId':question['speakerId'],
@@ -341,7 +410,10 @@ class SocialEngine:
     @staticmethod
     def turn_contract(actor, room, topic):
         latest=room['history'][-1] if room['history'] else None
-        direct=bool(not topic.get('spoken') and latest and latest['speakerId']=='commander' and (
+        from backend.context.service import topic_ledger
+        pending = topic_ledger(room['history'])['openQuestions']
+        own_request = next((q for q in reversed(pending) if actor['id'] in q['targets']), None)
+        direct=bool(own_request or not topic.get('spoken') and latest and latest['speakerId']=='commander' and (
             actor['id'] in latest.get('mentions',[]) or '@'+actor['name'] in latest['text'] or
             '@'+actor.get('sourceName',actor['name']) in latest['text']))
         opening=bool(not room['history'] and topic.get('openingActorId')==actor['id'])
@@ -354,6 +426,11 @@ class SocialEngine:
             '目标必须是用户请求的真实目录成员；若不愿或暂不能建群，选择 speak 说明，不用将来会执行的承诺替代行动。' if new_group else
             '你刚发起新群，请选择 speak 自然开场，不再次邀请。' if opening else
             '用户点名请求，须用行动或 speak 回应，也可以拒绝。' if direct else '')
+        closing = closing_context(room['history'], topic, [a['id'] for a in room['members']])
+        if closing['closing']:
+            guidance += '用户正在道别、准备离开。简短自然道别或沉默；不要追问明早安排，不把问候变成工作承诺或新的同伴接力。用户同时提出的具体请求仍须回应。'
+            if not closing['hasUserRequest']:
+                actions = ['speak'] if direct else ['speak', 'wait', 'end']
         return direct,opening,new_group,actions,guidance
 
     async def prepare(self, actor, room, topic, source):
@@ -364,16 +441,16 @@ class SocialEngine:
         from backend.chat.conversation_scope import asks_about_work
         if room.get('limitedHistory'):
             topic={**topic,'prompt':room['invitationSummary']}
-        visible_room={**room,'history':room['history'][-12:]}
+        visible_room={**room,'history':room['history'][-self.dialogue_history_limit():]}
         latest=room['history'][-1] if room['history'] else None
         _,_,_,actions,turn_guidance=self.turn_contract(actor,room,topic)
         latest_user=next((m for m in reversed(room['history']) if m['speakerId']=='commander'),None)
-        current_text=(latest_user or latest or {}).get('text',topic['prompt'])
+        current_text=((latest if topic.get('spoken') else latest_user or latest) or {}).get('text',topic['prompt'])
         from backend.chat.task_reference import resolve_task_reference, DEICTIC
         related_work=resolve_task_reference(self.c.store,actor['id'],
-            current_text,room['history'][-6:])
+            current_text,room['history'][-6:], conversation_id=room['id'], public=True)
         decision = await runtime.think(actor['id'],source,json.dumps({'actorId':actor['id'],'actorName':actor['name'],'room':visible_room,
-            'focus':self.conversation_focus(room,topic),'turn':topic.get('spoken',0),
+            'focus':self.conversation_focus(room,topic,actor['id']),'turn':topic.get('spoken',0),
             'relatedWork':related_work,
             'guidance':('这是成员自己发起的交流；用户没有提出本轮问题。优先接同伴刚才的具体话或自己的相关兴趣，'
                 '不要转成等待用户回来、回复或批准。' if topic.get('proactive') else
@@ -388,6 +465,7 @@ class SocialEngine:
     async def decide(self, actor, room, topic, source, prepared=None):
         if self.actor_busy(actor['id']):raise SocialPreempted()
         room=self.actor_room(self.topic_room(room,topic),actor)
+        publication_history = room['history']
         # The original topic prompt may predate admission and was not necessarily shared.
         topic = {**topic, 'prompt': room['invitationSummary']} if room.get('limitedHistory') else topic
         persona,_=background(actor['id'])
@@ -397,10 +475,18 @@ class SocialEngine:
         from backend.chat.task_reference import resolve_task_reference
         from backend.chat.conversation_scope import asks_about_work
         latest_user=next((m for m in reversed(room['history']) if m['speakerId']=='commander'),None)
-        work_query=(latest_user or latest or {}).get('text',topic['prompt'])
+        work_query=((latest if topic.get('spoken') else latest_user or latest) or {}).get('text',topic['prompt'])
         related_work=(prepared.get('_relatedWork') if prepared is not None else
             resolve_task_reference(self.c.store,actor['id'],
-                work_query,room['history'][-6:]))
+                work_query,room['history'][-6:], conversation_id=room['id'], public=True))
+        context_bundle = None
+        if getattr(self.c, 'context', None):
+            from backend.context.contracts import ContextRequest
+            context_bundle = self.c.context.collect(ContextRequest(actor['id'], room['id'], 'social',
+                work_query, source, topic.get('runId') or '', self.dialogue_preset(), True),
+                history=room['history'], persona={'background': persona})
+            room = {**room, 'history': context_bundle.history}
+            topic = {**topic, '_contextTraceId': context_bundle.trace_id}
         work_followup=bool(related_work or topic.get('routeKind')=='followup' or
             latest and latest['speakerId']=='commander' and asks_about_work(latest['text']))
         direct_request,new_group_opening,new_group_request,_,_=self.turn_contract(actor,room,topic)
@@ -419,6 +505,8 @@ class SocialEngine:
             '不能编造任务成果、实验读数、已整理或已发出的记录，也不能替别人说话。轻度日常可以聊，但没有可见生活事件时，不自称刚洗澡、做饭、敷面膜、出门或正待在某个具体地点；直接回应消息即可。只能引用当前可见消息，replyTo 是被回应的消息编号。'
             '返回 JSON：action 为 speak/wait/end/invite/create_group；speak 含 segments（1至3条，普通短答默认一条，只有连续独立发言才拆分）、sourceIds（仅当前 sourceId）、replyTo（消息编号或 null）、mentions（人物编号数组）；'
             'invite 含 targetId、reason、summary；create_group 另含 title；wait/end 无台词。')
+        if self.dialogue_preset() == 'compact':
+            rules += '当前采用节省 token 的表达：保留人物差异和对最近消息的有效回应，省略重复背景、客套铺垫和已经说清的结论；没有新内容优先 wait/end。'
         from backend.chat.sticker_catalog import expression_catalog
         rules+=expression_catalog(actor.get('sourceName',actor['name']))
         if not work_followup and topic.get('routeKind')!='clarify':
@@ -426,6 +514,11 @@ class SocialEngine:
         if topic.get('proactive'):
             rules+='这是成员自行发起的群聊，不是用户提问。原作里对指挥官说的台词只反映与指挥官的关系，不能照搬成同伴对话的目标。接最近同伴的具体话，也可以聊自己有依据的兴趣；别把每轮变成等指挥官回来、回复或批准。若同伴已说清，直接收住。'
         rules+='若已经回答清楚且没有需要别人回应的新问题，speak 可以附 endAfterReply:true，自然结束本话题。不反复接力表示待命或重复已作出的分工。'
+        rules+='focus.responseTarget 非空时，当前有同伴或用户在直接请求你回应；回答该问题，replyTo 使用该目标编号，不再重复回应旧问候。'
+        closing = closing_context(room['history'], topic, [a['id'] for a in room['members']])
+        if closing['closing']:
+            rules += self.turn_contract(actor, room, topic)[4]
+            rules += '没有待答的用户请求时，只需简短道别；不询问明早要准备什么、不创造早餐或杂务分工、不以“我还没睡、随时找我”重新开启话题。'
         if topic.get('spoken',0)>=6:
             rules+='这一话题已经接续多轮。只有确有新内容或仍需回答的具体问题才发言；可以一句话自然收住，别再发起新的追问或承诺。'
         if direct_request:
@@ -441,7 +534,7 @@ class SocialEngine:
         current_text=latest['text'] if latest else topic['prompt']
         if related_work and related_work.get('ambiguous'):
             rules+='当前“这本书”等指代对应多份资料，只询问具体是哪一本，不猜测读过哪份。'
-        visible_room={**room,'history':room['history'][-12:]}
+        visible_room={**room,'history':room['history'][-self.dialogue_history_limit():]}
         runtime=getattr(self.c.cognition,'runtime',None)
         decision=None
         if runtime and runtime.active(actor['id']):
@@ -464,7 +557,7 @@ class SocialEngine:
             {'role':'system','content':'当前人物（唯一发言者）：displayName='+actor['name']+
                 '；sourceName='+actor_source+'；actorId='+actor['id']+'\n'+persona},
             {'role':'system','content':'可见认知：'+mind},
-            *([{'role':'system','content':'当前追问关联的本角色已核验工作经历：'
+            *([{'role':'system','content':'当前追问关联的可见资料（仅阅读者能声称亲自读取）：'
                 +json.dumps(related_work,ensure_ascii=False)}] if related_work else []),
             {'role':'system','content':'相关背景：'+json.dumps(lore(current_text,actor.get('sourceName',actor['name'])),ensure_ascii=False)},
             {'role':'system','content':'以下是逐条历史转录。每条记录的 speakerId 是唯一作者；role=peer/commander 的记录不是当前人物发言，不能把其中的“我”认作当前人物。'},
@@ -472,7 +565,11 @@ class SocialEngine:
             {'role':'user','content':json.dumps({'actorId':actor['id'],'actorName':actor['name'],
                 'room':{**visible_room,'history':[{k:v for k,v in m.items() if k!='text'}
                     for m in visible_room['history']]},
-                'focus':self.conversation_focus(room,topic),'sourceId':source},ensure_ascii=False)}]
+                'focus':self.conversation_focus(room,topic,actor['id']),'sourceId':source},ensure_ascii=False)}]
+        if context_bundle:
+            messages.insert(-1, {'role': 'system', 'content': '本频道允许的来源片段；ownRead=false 时不能声称本人读过：'
+                + json.dumps(context_bundle.documents + context_bundle.experiences, ensure_ascii=False)})
+            self.c.context.pack_messages(context_bundle, messages, 2400)
         async with self.gate:
             if topic.get('attachments') and not room.get('limitedHistory'):
                 from backend.chat.attachments import image_parts
@@ -500,6 +597,16 @@ class SocialEngine:
                         validate(value,source,facts={'prompt':topic['prompt'],
                             'history':[m['text'] for m in room['history']]})
                         speech=' '.join(value['segments'])
+                        own_previous = [m['text'] for m in publication_history
+                            if m['speakerId'] == actor['id'] and m.get('topicId') == topic['id']]
+                        if repeats_own_speech(speech, own_previous,
+                                publication_history[-1]['text'] if publication_history else ''):
+                            raise ValueError('这段台词重复了本人在本话题的旧发言。请直接回答眼前的问题，给出新增信息或简短收住。')
+                        response_target = self.conversation_focus(room, topic, actor['id'])['responseTarget']
+                        if response_target and response_target['speakerId'] != 'commander' and value.get('replyTo') != response_target['id']:
+                            raise ValueError('当前同伴正在直接问你，replyTo 必须为 '+response_target['id']+'；不要继续回复旧的用户问候。')
+                        if closing['closing'] and not closing['hasUserRequest'] and closing_violation(speech):
+                            raise ValueError('用户已明确道别；请简短道别，不新增问题、任务安排或待命承诺。')
                         claimed=self.identity_claim_mismatch(speech,actor,room)
                         if claimed:
                             raise ValueError('台词把当前人物误认成同伴 '+claimed+'；请按当前 actorId 重新表达')
@@ -525,6 +632,8 @@ class SocialEngine:
                             raise ValueError('邀请摘要过长')
                         if value['action']=='create_group' and (not isinstance(value.get('title'),str) or not 1<=len(value['title'].strip())<=40):
                             raise ValueError('新群名称应为1至40字')
+                    if context_bundle:
+                        value['contextTraceId'] = context_bundle.trace_id
                     return value
                 except ValueError as exc:
                     if attempt==(2 if direct_request or new_group_opening else 1): raise
@@ -544,6 +653,8 @@ class SocialEngine:
             changed=session.execute(update(SocialTopic).where(SocialTopic.id==topic['id'],SocialTopic.version==topic['version'],
                 SocialTopic.status=='active').values(version=SocialTopic.version+1))
             if changed.rowcount!=1: return False
+            if getattr(self.c, 'context', None):
+                self.c.context.validate_trace(value.get('contextTraceId'))
             row=session.get(SocialTopic,topic['id'])
             data=dict(row.data)
             kind=value['action']
@@ -561,21 +672,68 @@ class SocialEngine:
                 data['invites']+=1
                 status='pending'
             elif kind=='speak':
-                if data['spoken']>=data.get('maxSpoken',6): return False
+                if data['spoken']>=self.topic_limit(data):
+                    session.rollback()
+                    return False
                 body='\n\n'.join(value['segments'])
                 recent=session.scalars(select(Message).where(Message.conversation_id==room.id).order_by(
-                    *message_order(session,newest_first=True)).limit(8)).all()
-                if any(m.body.strip()==body.strip() for m in recent):return False
+                    *message_order(session,newest_first=True)).limit(40)).all()
+                from backend.context.service import topic_ledger
+                ledger_history = [{'id': m.id, 'text': m.body, 'speakerId': m.speaker_id,
+                    'replyTo': (m.metadata_json or {}).get('replyTo'),
+                    'mentions': (m.metadata_json or {}).get('mentions', [])} for m in reversed(recent)]
+                ledger = topic_ledger(ledger_history)
+                closing = closing_context(ledger_history, data, [m.actor_id for m in session.scalars(
+                    select(ConversationMember).where(ConversationMember.conversation_id==room.id,
+                        ConversationMember.is_active.is_(True))).all() if m.actor_id != 'commander'])
+                own_previous = [m.body for m in recent if m.speaker_id == actor['id']
+                    and (m.metadata_json or {}).get('topicId') == topic['id']]
+                latest_text = ledger_history[-1]['text'] if ledger_history else ''
+                if repeats_own_speech(body, own_previous, latest_text):
+                    session.rollback()
+                    self.c.store.event(data.get('runId'), 'social.reply_suppressed',
+                        {'topicId': topic['id'], 'actorId': actor['id'], 'reason': 'repeated-own-speech'})
+                    return False
+                if closing['closing'] and not closing['hasUserRequest'] and closing_violation(body):
+                    session.rollback()
+                    self.c.store.event(data.get('runId'), 'social.reply_suppressed',
+                        {'topicId': topic['id'], 'actorId': actor['id'], 'reason': 'farewell-reopened'})
+                    return False
+                obligated = any(actor['id'] in q['targets'] or value.get('replyTo') == q['id']
+                    for q in ledger['openQuestions']) or actor['id'] in closing['pendingTargets']
+                correction = bool(re.search(r'不(?:是|对|同意)|纠正|更正|但是|不过|实际|补充|相反|应该是', body))
+                topic_recent=[m.body for m in recent if (m.metadata_json or {}).get('topicId')==topic['id']]
+                if not obligated and any(re.sub(r'\W+', '', prior)==re.sub(r'\W+', '', body) for prior in topic_recent):
+                    session.rollback()
+                    return False
                 if data['spoken']:
                     from difflib import SequenceMatcher
                     normalized=re.sub(r'\W+','',body)
-                    if any(m.speaker_id!='commander' and len(normalized)>=10 and
-                        SequenceMatcher(None,normalized,re.sub(r'\W+','',m.body)).ratio()>.82 for m in recent):return False
+                    novelty=self.topic_novelty(body,topic_recent)
+                    data['lastNovelty']=novelty
+                    assent = bool(re.match(r'^(?:我也|嗯|是啊|没错|同意|赞同|确实|说得对)', body))
+                    residual = re.sub(r'^(?:我也(?:同意|觉得|认为)?|嗯|是啊|没错|同意|赞同|确实|说得对)[，,。！!\s]*', '', body)
+                    residual = re.sub(r'\W+', '', residual)
+                    pure_repeat = bool(residual and any(residual in re.sub(r'\W+', '', prior) for prior in topic_recent))
+                    if novelty == 0.0 and assent and pure_repeat and not obligated and not correction:
+                        # Reject this candidate without consuming the CAS version;
+                        # the exchange must still evaluate the other candidates.
+                        session.rollback()
+                        return False
+                    data['staleTurns']=0
                 data['spoken']+=1
-                if value.get('endAfterReply') is True:row.status='ended'
+                remaining = [q for q in ledger['openQuestions'] if q['id'] != value.get('replyTo')
+                    and actor['id'] not in q['targets']]
+                required_closings = set(closing['pendingTargets']) - {actor['id']} if closing['closing'] else set()
+                if value.get('endAfterReply') is True and not remaining and not required_closings:row.status='ended'
+                if closing['closing'] and not closing['hasUserRequest']:
+                    if not (set(closing['pendingTargets']) - {actor['id']}):
+                        row.status = 'ended'
+                data['ledger'] = {**ledger, 'openQuestions': remaining}
                 self.service._append_message(session,room,actor['id'],'text',body,message_id=aid,
                     metadata={'expression':True,'segments':value['segments'],'topicId':topic['id'],
-                        'socialActionId':aid,'replyTo':value.get('replyTo'),'mentions':value.get('mentions',[]),'runId':data['runId']})
+                        'socialActionId':aid,'replyTo':value.get('replyTo'),'mentions':value.get('mentions',[]),
+                        'runId':data['runId'], 'contextTraceId':value.get('contextTraceId')})
             elif kind=='end': data['withdrawn']=list(dict.fromkeys([*data.get('withdrawn',[]),actor['id']]))
             data['recent']=(data.get('recent',[])+[actor['id']])[-8:]
             row.data=data
@@ -715,9 +873,9 @@ class SocialEngine:
             self.flush()
 
     async def _exchange(self, tid):
-        for turn in range(8):
+        for turn in range(max(8, self.topic_limit(self.topic(tid)))):
             topic=self.topic(tid)
-            if topic.get('spoken',0)>=topic.get('maxSpoken',6):break
+            if topic.get('spoken',0)>=self.topic_limit(topic):break
             try:
                 room=self.topic_room(self.snapshot(topic['conversationId']),topic)
             except ValueError:
@@ -734,7 +892,13 @@ class SocialEngine:
             prefetch_count=3 if direct>=3 else 2
             runtime=getattr(self.c.cognition,'runtime',None)
             prepared={}
-            if runtime and runtime.enabled and os.getenv('AZURJUUS_GROUP_PREFETCH','1')!='0':
+            # A normal user chat publishes one response at a time.  Preparing
+            # two extra model decisions there only burns tokens and makes the
+            # UI feel busy; retain parallel preparation for legacy/autonomous
+            # exchanges and genuinely multi-addressed user turns.
+            prefetch_allowed = (os.getenv('AZURJUUS_GROUP_PREFETCH','1') != '0'
+                and (topic.get('routeKind') != 'chat' or direct >= 2))
+            if runtime and runtime.enabled and prefetch_allowed:
                 frozen_ids={message['id'] for message in room['history']}
                 for actor in candidates[:prefetch_count]:
                     aid=stable(tid,str(turn),actor['id'])
@@ -805,7 +969,12 @@ class SocialEngine:
             if not progressed: break
         with session_scope() as session:
             topic=session.get(SocialTopic,tid)
-            if topic.status=='active': topic.status='ended'
+            if topic.status=='active':
+                room = self.topic_room(self.snapshot(topic.conversation_id), {'id': tid, **topic.data})
+                from backend.context.service import topic_ledger
+                ledger = topic_ledger(room['history'])
+                topic.data = {**topic.data, 'ledger': ledger}
+                topic.status = 'waiting' if ledger['openQuestions'] else 'ended'
         return '本轮交流已结束。'
 
 

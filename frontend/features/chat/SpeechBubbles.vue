@@ -1,20 +1,37 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
-import { enqueueSpeech, liveSpeechIds } from './speechQueue';
-const props = defineProps<{ text: string; streaming?: boolean; single?: boolean; self?: boolean; messageId?:string; conversationId?:string }>();
+import { enqueueSpeech, liveSpeechIds, claimLiveSpeech } from './speechQueue';
+const props = defineProps<{ text: string; streaming?: boolean; single?: boolean; self?: boolean; messageId?:string; conversationId?:string; preview?:boolean; pace?:string }>();
 const emit = defineEmits<{ reveal: [] }>();
 const stickers:Record<string,string>={赞同:'👍',疑惑:'🤔',开心:'😄',困倦:'😴'};
 const failedStickers = reactive(new Set<string>());
 function pieces(text:string){return text.split(/(\[表情:[^\]\n]{1,32}\])/g).filter(Boolean).map(t=>({text:t,sticker:t.match(/^\[表情:(.+)\]$/)?.[1]}));}
 // History is immediate; live output commits complete sentences without final flush.
-const fresh = !!props.messageId && liveSpeechIds.delete(props.messageId);
-const queued = fresh && props.text.length <= 180 && !props.single;
-const live = ref(!!props.streaming || queued);
+const fresh = !!props.preview || (!!props.messageId && claimLiveSpeech(props.messageId));
+const queued = !props.self && (fresh || !!props.streaming);
+const live = ref(!!props.streaming || fresh || !!props.messageId?.startsWith('outgoing-'));
 let release: (()=>void) | undefined;
-let waiting = queued;
+const waiting = ref(queued);
 const shown = ref<{ text: string; bubble: number }[]>([]);
 let timer: ReturnType<typeof setTimeout> | undefined;
 let wasStreaming = !!props.streaming;
+let lastReveal = 0;
+let started = false;
+function beginLive() {
+  if (started || props.self || props.single) return;
+  started = true;
+  clearTimeout(timer); timer = undefined;
+  live.value = true;
+  shown.value = [];
+  waiting.value = true;
+  release = enqueueSpeech(props.conversationId || 'chat', done => {
+    release = done; waiting.value = false; advance();
+  });
+}
+function bubbleGap() {
+  const pace = props.pace || localStorage.getItem('azur-speech-pace') || 'natural';
+  return pace === 'instant' ? 0 : pace === 'calm' ? 3000 : 2000;
+}
 function sentences() {
   if (props.single) return [{ text: props.text, bubble: 0 }];
   const source = props.text.replace(/\r\n?/g, '\n');
@@ -38,7 +55,7 @@ function sentences() {
       if (pause) {
         const text = source.slice(start, i).trim();
         if (text) result.push({ text, bubble });
-        bubble = Math.min(3, bubble + 1);
+        bubble++;
         while (i < source.length && source[i] === '\n') i++;
         start = i;
         i--;
@@ -58,26 +75,38 @@ function sentences() {
 }
 const readyParts = computed(sentences);
 function advance() {
-  if (waiting) return;
+  if (waiting.value) return;
   timer = undefined;
   const ready = readyParts.value;
   if (!live.value || props.single) { shown.value = ready; return; }
   if (shown.value.length < ready.length) {
     const next = ready[shown.value.length]!;
+    const previous = shown.value.at(-1);
+    const remaining = lastReveal + bubbleGap() - performance.now();
+    if (previous && next.bubble !== previous.bubble && remaining > 0) {
+      timer = setTimeout(advance, remaining);
+      return;
+    }
     shown.value.push(next);
+    lastReveal = performance.now();
     emit('reveal');
-    const pace = localStorage.getItem('azur-speech-pace') || 'natural';
-    timer = setTimeout(advance, pace === 'instant' ? 0 : Math.min(1200, Math.max(450, next.text.length * (pace === 'calm' ? 35 : 24))));
+    const pace = props.pace || localStorage.getItem('azur-speech-pace') || 'natural';
+    timer = setTimeout(advance, pace === 'instant' ? 0 : Math.min(260, Math.max(80, next.text.length * 8)));
   } else if (!props.streaming) {
-    release?.();
+    const remaining = lastReveal + bubbleGap() - performance.now();
+    if (remaining > 0) timer = setTimeout(advance, remaining);
+    else release?.();
   }
 }
 watch(() => [props.text, props.streaming], () => {
-  if (props.streaming) { wasStreaming = true; live.value = true; }
+  if (props.streaming) { wasStreaming = true; beginLive(); }
   if (!timer) advance();
 }, { immediate: true });
-if (queued) release = enqueueSpeech(props.conversationId || 'chat', done => { release = done; waiting = false; advance(); });
-function revealAll() { clearTimeout(timer); waiting = false; shown.value = readyParts.value; release?.(); emit('reveal'); }
+if (queued) beginLive();
+watch(() => !!props.messageId && liveSpeechIds.has(props.messageId), marked => {
+  if (marked && props.messageId && claimLiveSpeech(props.messageId)) beginLive();
+});
+function revealAll() { clearTimeout(timer); timer = undefined; waiting.value = false; shown.value = readyParts.value; release?.(); emit('reveal'); }
 const bubbles = computed(() => {
   const result: { id: number; parts: { id: number; text: string }[] }[] = [];
   shown.value.forEach((part, id) => {
@@ -90,7 +119,7 @@ const bubbles = computed(() => {
 onBeforeUnmount(() => { clearTimeout(timer); release?.(); });
 </script>
 <template>
-  <div class="speech-stack" :class="{ 'speech-stack--self': self }" :aria-busy="streaming || shown.length < readyParts.length || undefined">
+  <div class="speech-stack" :class="{ 'speech-stack--self': self }" :data-waiting="waiting || undefined" :aria-busy="streaming || shown.length < readyParts.length || undefined">
     <div v-for="bubble in bubbles" :key="bubble.id" class="message-bubble" :class="{ 'speech-enter': live }">
       <span v-for="part in bubble.parts" :key="part.id" :class="{ 'sentence-enter': live }"><template v-for="(piece,index) in pieces(part.text)" :key="index"><span v-if="piece.sticker==='标枪疑惑'" class="official-sticker"><img class="animated" src="/resources/ui/javelin.gif" alt="标枪疑惑"><img class="still" src="/resources/ui/javelin.png" alt="标枪疑惑"></span><span v-else-if="piece.sticker && stickers[piece.sticker]" class="sticker" role="img" :aria-label="piece.sticker">{{stickers[piece.sticker]}}</span><span v-else-if="piece.sticker && failedStickers.has(piece.sticker)" class="sticker-fallback">{{piece.sticker}}</span><span v-else-if="piece.sticker" class="official-sticker"><img class="animated wiki-sticker" :src="'/api/stickers/'+encodeURIComponent(piece.sticker)" :alt="piece.sticker" loading="lazy" @error="failedStickers.add(piece.sticker)"><img class="still wiki-sticker" :src="'/api/stickers/'+encodeURIComponent(piece.sticker)+'?still=true'" :alt="piece.sticker" loading="lazy" @error="failedStickers.add(piece.sticker)"></span><template v-else>{{piece.text}}</template></template></span>
     </div>
@@ -106,10 +135,11 @@ onBeforeUnmount(() => { clearTimeout(timer); release?.(); });
 .sticker-fallback { display:inline-block; padding:4px 8px; color:#587c90; }
 .speech-stack .message-bubble { max-width: min(100%, 36em); overflow-wrap: anywhere; }
 .speech-stack--self { align-items: flex-end; }
-.speech-enter { animation: speech-in var(--duration-message) ease-out both; transform-origin: left bottom; }
+.speech-enter { animation: speech-in 260ms cubic-bezier(.16,1,.3,1) both; transform-origin: left bottom; }
+.speech-stack--self .speech-enter { transform-origin: right bottom; }
 .sentence-enter { animation: sentence-in var(--duration-message) ease-out both; }
 .speech-wait { padding: 8px 16px; color: #7199aa; }
-@keyframes speech-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes speech-in { from { opacity: 0; transform: translateY(8px) scale(.94); } to { opacity: 1; transform: none; } }
 @keyframes sentence-in { from { opacity: 0; } to { opacity: 1; } }
 :global(.reduced-motion) .speech-enter, :global(.reduced-motion) .sentence-enter { animation: none; }
 @media (prefers-reduced-motion: reduce) { .speech-enter, .sentence-enter { animation: none; } }

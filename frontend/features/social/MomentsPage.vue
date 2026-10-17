@@ -33,6 +33,27 @@ const pendingLikes = ref(new Set<string>()),
 const activePost = computed(() =>
   posts.value.find((post) => post.id === selectedPostId.value),
 );
+const commentThreads = computed(() => {
+  type Comment = Post['comments'][number];
+  const threads: { comment: Comment; replies: Comment[] }[] = [];
+  const roots = new Map<string, typeof threads[number]>();
+  for (const comment of activePost.value?.comments || []) {
+    const thread = comment.replyToId ? roots.get(comment.replyToId) : undefined;
+    if (thread) {
+      thread.replies.push(comment);
+      roots.set(comment.id, thread);
+    } else {
+      const root = { comment, replies: [] };
+      threads.push(root);
+      roots.set(comment.id, root);
+    }
+  }
+  return threads;
+});
+function replyName(id?: string | null) {
+  const target = activePost.value?.comments.find(comment => comment.id === id);
+  return target ? people.value[target.authorId]?.name || '成员' : '';
+}
 let listScroll = 0,
   returnFocus: HTMLElement | null = null,
   disposed = false,
@@ -470,15 +491,23 @@ onUnmounted(() => {
             评论 <span>{{ activePost.comments.length }}</span>
           </h3>
           <p v-if="!activePost.comments.length" class="muted">还没有评论。</p>
-          <div
-            v-for="item in activePost.comments"
-            :key="item.id"
-            class="moments-comment"
-          >
-            <Avatar :agent="people[item.authorId]" />
-            <div>
-              <strong>{{ people[item.authorId]?.name || "成员" }}</strong>
-              <p>{{ item.body }}</p>
+          <div v-for="thread in commentThreads" :key="thread.comment.id" class="moments-comment-thread" :data-comment-id="thread.comment.id">
+            <div class="moments-comment">
+              <Avatar :agent="people[thread.comment.authorId]" />
+              <div>
+                <strong>{{ people[thread.comment.authorId]?.name || "成员" }}</strong>
+                <p>{{ thread.comment.body }}</p>
+              </div>
+            </div>
+            <div v-if="thread.replies.length" class="moments-replies" aria-label="评论回复">
+              <div v-for="reply in thread.replies" :key="reply.id" class="moments-comment moments-comment--reply" :data-comment-id="reply.id">
+                <Avatar :agent="people[reply.authorId]" />
+                <div>
+                  <strong>{{ people[reply.authorId]?.name || '成员' }}</strong>
+                  <span class="moments-reply-target">回复 {{ replyName(reply.replyToId) }}</span>
+                  <p>{{ reply.body }}</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -97,17 +97,22 @@ def background(actor_id):
     state = inspect(actor_id)
     # Existing database edits stay authoritative until the user applies a card.
     text = state['text']
-    # Keep the six examples in the editable card, but do not recite all of
-    # them on every model call. They were becoming a six-line dialogue script.
-    if state['version']!='legacy-database' and not state['hasOverride'] and state['latest']:
-        base=state['latest']
-        text=f"{base['name']}，{base['faction']}。{base['style']}\n{base['intimacy']}"
     from backend.characters.character_identity import material_context
     from backend.characters.dialogue_persona import imported_background
     with session_scope() as session:
         actor=session.get(Actor,actor_id)
         if not state['hasOverride']:
-            text=imported_background(text,actor.source_character or actor.name)
+            source_name=actor.source_character or actor.name
+            projected=imported_background(text,source_name)
+            # Shipped legacy prompts contain the old, long voice-line script.
+            # Keep that value available through inspect(), but project the
+            # compact terminal card at runtime. User-authored overrides still
+            # win and are never rewritten.
+            if state['latest'] and (state['version']!='legacy-database' or projected != text):
+                base=state['latest']
+                text=f"{base['name']}，{base['faction']}。{base['style']}\n{base['intimacy']}"
+            else:
+                text=projected
         materials=[{**m,'text':imported_background(m['text'],m['name'])}
             for m in (actor.extra_json or {}).get('sourceMaterials',[])]
         text += material_context(materials)

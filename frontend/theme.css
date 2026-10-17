@@ -5,6 +5,8 @@
 @import "./features/settings/settings.css";
 @import "./styles/responsive.css";
 @import "./styles/blue-glass.css";
+@import "./styles/refinements.css";
+@import "./styles/secondary-pages.css";
 
 /* JUUS shared visual tokens. Feature files own layout, never local themes. */
 :root {
@@ -22,8 +24,8 @@
   --glass: #ffffffc9;
   --selected: #eefbff;
   --shadow: 0 3px 12px #38586e12;
-  --radius-panel: 8px;
-  --radius-control: 6px;
+  --radius-panel: 12px;
+  --radius-control: 8px;
   --ease: cubic-bezier(0.22, 0.7, 0.25, 1);
   --duration-button: 120ms;
   --duration-message: 180ms;
@@ -34,6 +36,6 @@
   --conversation-width: clamp(300px, 32vw, 420px);
   --list-row-height: 76px;
   --avatar-size: 48px;
-  --bubble-radius: 8px;
+  --bubble-radius: 12px;
   --message-gap: 10px;
 }

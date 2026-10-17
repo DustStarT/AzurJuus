@@ -63,8 +63,45 @@ def install_run_api(app, service, settings):
             return {**service.serialize_settings(service.get_workspace(session)),
                     'userAddress': service.get_or_create_user(session).name}
 
+    def persist_verified_task_memory(run):
+        """Persist task evidence before rendering a character reply.
+
+        Rendering is a presentation step. A timeout, model interruption, or
+        malformed stylistic response must not erase the durable bridge that a
+        later chat follow-up uses to refer to a file the actor actually read.
+        """
+        if run.get("mode") == "chat" or run.get("status") != "completed":
+            return
+        from backend.chat.task_reference import read_sources
+        participants = {a["actorId"] for a in run.get("assignments", [])}
+        if read_sources(store, run, run["actorId"]):
+            participants.add(run["actorId"])
+        if not participants:
+            return
+        with session_scope() as session:
+            for actor_id in participants:
+                sources = read_sources(store, run, actor_id)
+                memory_id = "task-memory-" + hashlib.sha256((run["id"] + ":" + actor_id).encode()).hexdigest()[:24]
+                if session.get(MemoryChunk, memory_id) is not None:
+                    continue
+                outcomes = [a.get("result", {}).get("summary", "") for a in run.get("assignments", [])
+                            if a.get("actorId") == actor_id]
+                if not outcomes:
+                    outcomes = [str((run.get("reviewResult") or {}).get("summary") or
+                                    (run.get("result") or {}).get("reviewSummary") or
+                                    (run.get("result") or {}).get("summary") or "")]
+                summary = ";".join(outcomes)[:2400]
+                session.add(MemoryChunk(id=memory_id, actor_id=actor_id,
+                    conversation_id=run.get("conversationId"), source_kind="verified_task",
+                    summary="已验收的参与经历：" + summary[:600],
+                    metadata_json={"runId":run["id"], "verified":True,
+                        "taskEvidence":{"summary":summary, "source":"accepted_assignment",
+                                         "actorId":actor_id},
+                        **({"readSources":sources} if sources else {})}))
+
     async def finished(run_id, text):
         run = store.get(run_id)
+        persist_verified_task_memory(run)
         if coordinator.method_runtime:coordinator.method_runtime.recover_selections(run)
         expressed = coordinator.expression and coordinator.expression.enabled
         if expressed and run['mode'] != 'chat':
@@ -122,25 +159,6 @@ def install_run_api(app, service, settings):
             candidates = list(run.get("learningCandidates", []))
             by_id = {a["id"]: a for a in run["assignments"]}
             if run["mode"] != "chat" and run["status"] == "completed":
-                # Social generation reads business memories rather than the
-                # execution journal. Bridge only verified participant outcomes.
-                from backend.chat.task_reference import read_sources
-                participants = {a["actorId"] for a in run["assignments"]}
-                if read_sources(store, run, run['actorId']):
-                    participants.add(run['actorId'])
-                for actor_id in participants:
-                    memory_id = "task-memory-" + hashlib.sha256((run_id + ":" + actor_id).encode()).hexdigest()[:24]
-                    if session.get(MemoryChunk, memory_id) is None:
-                        outcomes = [a.get("result", {}).get("summary", "") for a in run["assignments"] if a["actorId"] == actor_id]
-                        if not outcomes:
-                            outcomes = [str((run.get('reviewResult') or {}).get('summary') or
-                                (run.get('result') or {}).get('reviewSummary') or '')]
-                        session.add(MemoryChunk(id=memory_id, actor_id=actor_id, conversation_id=run["conversationId"],
-                            source_kind="verified_task", summary="已验收的参与经历：" + "；".join(outcomes)[:600],
-                            metadata_json={"runId":run_id, "verified":True,
-                                'taskEvidence':{'summary':'；'.join(outcomes)[:2400],
-                                    'source':'accepted_assignment', 'actorId':actor_id},
-                                **({'readSources':sources} if (sources:=read_sources(store,run,actor_id)) else {})}))
                 for assignment in run["assignments"]:
                     for upstream_id in assignment["dependsOn"]:
                         upstream = by_id[upstream_id]
@@ -172,12 +190,21 @@ def install_run_api(app, service, settings):
             if conversation and message is None:
                 service._append_message(session, conversation, payload["actorId"], "text" if run["mode"] == "chat" else "task_progress", payload["text"],
                     metadata={"runId": run_id, "phase": payload["assignmentId"], 'expression':payload.get('expression',False),
-                        'segments':payload.get('segments'), 'sourceIds':payload.get('sourceIds')}, message_id=payload["messageId"])
+                        'segments':payload.get('segments'), 'sourceIds':payload.get('sourceIds'),
+                        'sourceId':next(iter(payload.get('sourceIds') or []), None),
+                        'contextTraceId':payload.get('contextTraceId'),
+                        'cognitionTraceId':payload.get('cognitionTraceId')}, message_id=payload["messageId"])
             elif message is not None:
                 message.body = payload["text"]
         store.event(run_id, "conversation.changed", {"conversationId": run["conversationId"]})
 
     coordinator = RunCoordinator(store, load_settings, finished, "")
+    from backend.context.service import ContextService
+    coordinator.context = ContextService(settings.workspace_state_path.parent, store, load_settings)
+    store.context_service = coordinator.context
+    coordinator.context.foreground_busy = lambda: bool(coordinator.tasks)
+    from backend.context.api import install_context_api
+    install_context_api(app, coordinator, service)
     def recover_result(run):
         if run.get('mode')=='chat' or run.get('status')!='completed' or not (run.get('result') or {}).get('summary'):return
         with session_scope() as session:
@@ -425,6 +452,7 @@ def install_run_api(app, service, settings):
                         .values(status='expired'))
                 conversation = session.get(Conversation, cid)
                 service._append_message(session, conversation, "commander", "text" if run["mode"] == "chat" else "task", run.get('userPrompt',run["prompt"]), metadata={"runId":run["id"],"mentions":list(dict.fromkeys(mentions)),
+                    'requestId': str(payload.get('requestId') or ''),
                     **({'routeKind':route_kind} if route_kind else {}),
                     'attachments':[{k:a[k] for k in ('id','name','mime','conversationId')} for a in run.get('attachments',[])]}, message_id=message_id)
         if not run.get("userMessageId"):
@@ -439,6 +467,18 @@ def install_run_api(app, service, settings):
     async def create_run(payload: dict, request: Request):
         payload = checked(payload, RunInput)
         return await admit(payload, request)
+
+    @app.post('/api/context/index-document')
+    async def index_document(payload: dict, request: Request):
+        from pydantic import BaseModel, ConfigDict, Field
+        class FullIndexInput(BaseModel):
+            model_config = ConfigDict(extra='forbid', strict=True)
+            conversationId: str = Field(min_length=1, max_length=100)
+            path: str = Field(min_length=1, max_length=2000)
+        checked_payload = checked(payload, FullIndexInput)
+        return await admit({'conversationId': checked_payload['conversationId'], 'mode': 'task',
+            'prompt': '请通过 index_document 对指定文件执行全文索引，逐页保留实际读取证据。文件路径数据：'
+                + json.dumps(checked_payload['path'], ensure_ascii=False)}, request)
 
     @app.get("/api/runs")
     async def list_runs():
@@ -667,7 +707,7 @@ def install_run_api(app, service, settings):
             if not room:
                 raise HTTPException(404, '会话不存在。')
             row = session.get(Message, message_id)
-            metadata = {'routeProposal': {'requestId': request_id, 'actorIds': actor_ids,
+            metadata = {'requestId': request_id, 'routeProposal': {'requestId': request_id, 'actorIds': actor_ids,
                 'summary': summary, 'status': status}, 'routeKind': 'swarm'}
             if row:
                 row.metadata_json = metadata
@@ -773,6 +813,7 @@ def install_run_api(app, service, settings):
                     if session.get(Message, message_id) is None:
                         service._append_message(session, session.get(Conversation, cid), 'commander', 'text', text,
                             metadata={'runId':team['id'], 'guidance':True, 'attachments':attachments,
+                                'requestId': str(payload.get('requestId') or ''),
                                 **({'routeKind':'guidance'} if route else {})}, message_id=message_id)
                 store.event(team['id'], 'conversation.changed', {'conversationId':cid})
                 if route:

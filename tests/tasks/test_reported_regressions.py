@@ -98,12 +98,12 @@ def test_task_outcome_requires_explicit_followup_in_casual_memory(mind):
     from uuid import uuid4
     r,c,_,ids,_=mind
     prior,_=c.store.create({'actorId':ids[0],'actors':[{'id':ids[0],'name':'人物'}],
-        'mode':'task','collaborative':False,'conversationId':'same-room',
+        'mode':'task','collaborative':False,'conversationId':'port-hub',
         'prompt':'检查旧报告中的红色密码','history':[]},uuid4().hex)
     c.store.update(prior['id'],status='completed',result={'summary':'旧报告列出海洋生态结论'})
     c.cognition.pump()
-    casual=r.snapshot(ids[0],'今天想聊什么','new-chat','same-room',include_task_memory=False)
-    explicit=r.snapshot(ids[0],'之前的工作结果是什么','followup','same-room',include_task_memory='outcomes')
+    casual=r.snapshot(ids[0],'今天想聊什么','new-chat','port-hub',include_task_memory=False)
+    explicit=r.snapshot(ids[0],'之前的工作结果是什么','followup','port-hub',include_task_memory='outcomes')
     assert '旧报告' not in json.dumps(casual,ensure_ascii=False)
     assert '海洋生态结论' in json.dumps(explicit,ensure_ascii=False)
     assert '红色密码' not in json.dumps(explicit,ensure_ascii=False)

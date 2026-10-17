@@ -87,8 +87,8 @@ def test_foreground_decision_retries_after_one_new_observation(mind):
 def test_public_memory_excludes_private_events(mind):
     r,c,_,ids,_=mind
     observe(c,ids[0],'私密口令：檀木',conversationId='private-room')
-    observe(c,ids[0],'公开讨论天气',conversationId='public-room')
-    snap=r.snapshot(ids[0],'天气','current','public-room',True)
+    observe(c,ids[0],'公开讨论天气',conversationId='port-hub')
+    snap=r.snapshot(ids[0],'天气','current','port-hub',True)
     assert '檀木' not in json.dumps(snap,ensure_ascii=False)
     assert '公开讨论天气' in json.dumps(snap,ensure_ascii=False)
     assert '檀木' not in json.dumps(r.snapshot(ids[1],'天气','other'),ensure_ascii=False)

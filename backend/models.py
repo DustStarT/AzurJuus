@@ -123,6 +123,7 @@ class SocialComment(TimestampMixin, Base):
     post_id: Mapped[str] = mapped_column(String(120), ForeignKey("social_posts.id"), nullable=False, index=True)
     author_id: Mapped[str] = mapped_column(String(80), ForeignKey("actors.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    reply_to_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     post: Mapped[SocialPost] = relationship(back_populates="comments")
     author: Mapped[Actor] = relationship()

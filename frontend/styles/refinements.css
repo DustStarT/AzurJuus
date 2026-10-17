@@ -1,0 +1,65 @@
+/* Shared control geometry and small interaction refinements. */
+.chat-layout {
+  grid-template-columns: var(--conversation-width) var(--layout-gap) minmax(0, 1fr);
+  gap: 0;
+}
+.layout-divider, .composer-divider { position: relative; touch-action: none; outline-offset: -2px; }
+.layout-divider { cursor: col-resize; }
+.layout-divider::after, .composer-divider::after {
+  content: ''; position: absolute; background: transparent; border-radius: var(--radius-control);
+  transition: background var(--duration-button);
+}
+.layout-divider::after { width: 3px; top: 18px; bottom: 18px; left: calc(50% - 1.5px); }
+.layout-divider:hover::after, .layout-divider:focus-visible::after,
+.composer-divider:hover::after, .composer-divider:focus-visible::after { background: #6ca9cf80; }
+.composer-divider { height: 9px; margin: -9px -16px 0; cursor: row-resize; z-index: 1; }
+.composer-divider::after { height: 3px; width: 38px; left: calc(50% - 19px); top: 3px; background: #aec8d55c; }
+.resizing-columns, .resizing-columns * { cursor: col-resize !important; user-select: none !important; }
+.resizing-rows, .resizing-rows * { cursor: row-resize !important; user-select: none !important; }
+.composer-input { align-items: flex-end; }
+.composer-input textarea { max-height: none; }
+.send-button { margin-bottom: 6px; }
+.composer-tool { position: static; }
+.composer-mode > .composer-tool-button { padding: 0; }
+.composer-mode .composer-tool-panel { width: 205px; }
+.composer-tool-panel { background: var(--paper); border-radius: var(--radius-panel); }
+.message-delivery { margin-top: 5px; color: var(--muted); font-size: 11px; display: flex; gap: 10px; align-items: center; }
+.message-delivery--failed { color: #b75d71; }
+.message-delivery button { padding: 2px 0; text-decoration: underline; text-underline-offset: 3px; }
+.message-row:has(.speech-stack[data-waiting="true"]) { display: none; }
+.rail { border-radius: 0 var(--radius-panel) var(--radius-panel) 0; }
+.list-tools, .conversation-card, .rail-nav > button, .rail-work,
+.send-button, .primary-button, .soft-button, .task-symbol, .route-proposal,
+.settings-content :is(input:not([type="checkbox"]):not([type="file"]), select, textarea) {
+  border-radius: var(--radius-control);
+}
+.drawer-header { min-height: 60px; padding: 12px 20px; }
+.drawer-header h2 { margin: 0; font-size: 17px; }
+.work-drawer { border-radius: var(--radius-panel) 0 0 var(--radius-panel); }
+.drawer-content { font-size: 13px; line-height: 1.7; }
+.drawer-content h3 { font-size: 15px; margin: 22px 0 10px; }
+.drawer-content h4 { font-size: 13px; margin: 16px 0 6px; }
+.drawer-content .assignment { padding: 12px 0; margin: 0; }
+.drawer-content .assignment p { margin: 7px 0; }
+.drawer-content small { font-size: 11px; color: var(--muted); }
+.drawer-content .drawer-tabs { padding-inline: 0; }
+.drawer-content :is(input:not([type="checkbox"]):not([type="file"]), select, textarea),
+.composer-tool-panel input:not([type="file"]) {
+  border: 1px solid var(--line); border-radius: var(--radius-control);
+  background: #ffffffd9; padding: 8px 10px; font: inherit; color: var(--ink);
+}
+.drawer-content textarea { display: block; width: 100%; min-height: 72px; margin-block: 8px; }
+.drawer-content form label { display: block; margin: 12px 0; }
+.drawer-content form label > :is(input:not([type="checkbox"]), select) { display: block; width: 100%; margin-top: 6px; }
+.mind-toolbar { display: flex; margin: 12px 0; font-size: 12px; color: var(--muted); }
+.mind-toolbar label { display: flex; align-items: center; gap: 6px; }
+.mind-management { margin-top: 22px; }
+.tab-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 16px; }
+.tab-row .text-button { border-radius: var(--radius-control); padding: 6px 9px; }
+.tab-row .text-button[aria-pressed="true"] { background: var(--selected); color: var(--blue); }
+.settings-footer { min-height: 62px; padding: 12px 22px; }
+.work-drawer .empty-state p { max-width: 25em; }
+@media (max-width: 800px) {
+  .layout-divider { display: none; }
+  .rail { border-radius: 0 var(--radius-panel) var(--radius-panel) 0; }
+}

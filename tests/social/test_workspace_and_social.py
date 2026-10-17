@@ -19,6 +19,7 @@ def test_workspace_settings_and_ui_session_persist(monkeypatch, tmp_path: Path) 
         workspace["settings"]["llmApiKey"] = "test-key"
         workspace["settings"]["authorizedWorkspaceRoot"] = str(tmp_path / "workspace")
         workspace["settings"]["searchApiKey"] = "search-key"
+        workspace["settings"]["dialoguePreset"] = "compact"
         workspace["uiSession"]["view"] = "circle"
         workspace["uiSession"]["activeConversationId"] = "port-hub"
 
@@ -28,6 +29,7 @@ def test_workspace_settings_and_ui_session_persist(monkeypatch, tmp_path: Path) 
     with TestClient(create_app()) as client:
         workspace = client.get("/api/workspace/load").json()["workspace"]
         assert workspace["settings"]["llmModel"] == "gpt-4.1"
+        assert workspace["settings"]["dialoguePreset"] == "compact"
         for key in ("llmApiKey", "searchApiKey"):
             assert key not in workspace["settings"]
             assert workspace["settings"][key + "Configured"] is True

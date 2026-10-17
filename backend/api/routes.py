@@ -172,7 +172,7 @@ def install_app_routes(app, service, settings, publish, maintenance_lock, runtim
     async def api_system_reset(request: Request, payload: dict | None = None):
         from backend.platform.personal_settings import require_idle
         require_idle(app.state.runs)
-        async with maintenance_lock:
+        async with maintenance_lock, app.state.runs.context.suspended():
             require_idle(app.state.runs)
             with session_scope() as session:
                 preserve=(payload or {}).get('preserveKeysAndProfile') is True
@@ -189,8 +189,16 @@ def install_app_routes(app, service, settings, publish, maintenance_lock, runtim
                             for row in session.query(ModelConnection).all()],
                         'extras':{k:v for k,v in (settings_row.ui_session_json or {}).get('settingsExtras',{}).items() if k.lower().endswith('apikey')},
                         'profile':{k:getattr(user,k) for k in ('name','initials','avatar_url')}}
+                    from backend.context.models import ContextSetting
+                    context_settings = session.get(ContextSetting, 1)
+                    if context_settings and context_settings.data.get('apiKey'):
+                        retained['context'] = {k: v for k, v in context_settings.data.items()
+                            if k in {'provider', 'baseUrl', 'model', 'modelVersion', 'dimensions', 'apiKey'}}
                 workspace = service.reset_system(session, actor_id=request.state.actor_id)
                 if retained:
+                    if retained.get('context'):
+                        from backend.context.models import ContextSetting
+                        session.add(ContextSetting(id=1, data=retained['context']))
                     settings_row=service.get_workspace(session)
                     settings_row.llm_api_key=retained['llm'];settings_row.tool_api_key=retained['tool']
                     settings_row.llm_model=retained['model'];settings_row.llm_base_url=retained['base']

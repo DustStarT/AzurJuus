@@ -20,6 +20,16 @@ deepseek-harness-runtime-bin==0.1.5rc1
 deepseek-harness-sdk==0.1.5rc1
 et_xmlfile==2.0.0
 fastapi==0.141.1
+fastembed==0.9.0
+filelock==4.2.0
+fsspec==2026.9.0
+hf-xet==1.7.0
+huggingface-hub==1.33.0
+loguru==0.7.3
+mmh3==5.3.1
+py-rust-stemmers==0.1.8
+tokenizers==0.23.3
+win32-setctime==1.2.0
 fire==0.7.1
 firecrawl-anydoc==0.2.4
 google-auth==2.55.1

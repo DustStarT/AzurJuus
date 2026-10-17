@@ -64,6 +64,7 @@ def test_stock_persona_projection_keeps_user_edits_and_original_source(world):
         aid, original = actor.id, actor.system_prompt
     assert '任务提醒' in original
     assert '任务提醒' not in background(aid)[0]
+    assert '说话与互动风格参考：' not in background(aid)[0]
     assert inspect(aid)['text'] == original
     user_text = '任务提醒只是我的自定义标签。请保留我的特别说话风格。'
     client.post('/api/agents/persona', json={'agentId': aid, 'systemPrompt': user_text}).raise_for_status()

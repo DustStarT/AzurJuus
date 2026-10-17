@@ -1,6 +1,6 @@
 import { ref, shallowRef, provide } from "vue";
 import type { Workspace, Run, RunEvent } from "./types";
-import { liveSpeechIds } from '../features/chat/speechQueue';
+import { markLiveSpeech } from '../features/chat/speechQueue';
 import { preloadAssets } from "./assets";
 import { createKernelRuntime, kernelRuntimeKey } from "./kernel-runtime";
 import type { WorkflowDetail } from "./kernel-runtime";
@@ -43,6 +43,26 @@ export function useWorkspace() {
   let initialized = false;
   let eventQueue: Promise<void> = Promise.resolve();
   let refreshGeneration = 0;
+  const knownMessages = new Set<string>();
+  const roomWatermarks = new Map<string, number>();
+  const sessionStarted = Date.now();
+  function markNewSnapshotMessages(next: Workspace) {
+    const initial = !workspace.value;
+    for (const [room, messages] of Object.entries(next.data.messages)) {
+      const watermark = roomWatermarks.get(room) ?? sessionStarted;
+      let latest = watermark;
+      for (const message of messages) {
+        const created = Date.parse(message.createdAt);
+        if (!initial && !knownMessages.has(message.id) && created >= watermark
+            && message.speakerId !== next.data.user.id && !['task_notice', 'route_proposal'].includes(message.type)) {
+          markLiveSpeech(message.id);
+        }
+        knownMessages.add(message.id);
+        if (Number.isFinite(created)) latest = Math.max(latest, created);
+      }
+      roomWatermarks.set(room, latest);
+    }
+  }
   async function refresh() {
     const generation = ++refreshGeneration;
     try {
@@ -51,6 +71,7 @@ export function useWorkspace() {
         api<{ runs: Run[]; cursor: number }>("/api/runtime/state"),
       ]);
       if (generation !== refreshGeneration || stopped) return;
+      markNewSnapshotMessages(boot.workspace);
       workspace.value = boot.workspace;
       preloadAssets(boot.workspace.data.agents);
       kernel.hydrateRuns(active.runs, active.cursor);
@@ -96,6 +117,12 @@ export function useWorkspace() {
       if (event.seq <= cursor) continue;
       if (cursor && event.seq !== cursor + 1) scheduleRefresh();
       cursor = event.seq;
+      // Register before ingest: the kernel can synchronously create a complete
+      // stream and Vue may mount its bubbles during the awaited projection.
+      if (event.type === 'social.message') markLiveSpeech(String(event.payload.messageId || ''));
+      if (event.type === 'message.complete' && event.payload.expression) {
+        markLiveSpeech(String(event.payload.messageId || event.runId + ':' + event.payload.assignmentId));
+      }
       try {
         await kernel.ingest(event);
         if (stopped) return;
@@ -123,13 +150,10 @@ export function useWorkspace() {
           scheduleRefresh();
         }
       } else if (event.type === 'social.message') {
-        liveSpeechIds.add(String(event.payload.messageId));
         scheduleRefresh();
       } else if (event.type === 'social.reply_deferred') {
         scheduleRefresh();
       } else if (event.type === "message.complete") {
-        const messageId = String(event.payload.messageId || event.runId + ":" + event.payload.assignmentId);
-        if (event.payload.expression) liveSpeechIds.add(messageId);
         scheduleRefresh();
       } else if (
         ["conversation.changed", "workspace.changed"].includes(event.type)

@@ -35,7 +35,7 @@ def remember(base_url: str, model: str, result: dict) -> None:
 def apply(payload: dict, settings: dict) -> dict:
     """Apply only known or explicitly probed controls to a fresh request body."""
     stage = settings.get('_mindStage', 'express')
-    cognitive = stage in {'understand', 'decide', 'reflect', 'profile'}
+    cognitive = stage in {'understand', 'decide', 'reflect', 'profile', 'compact'}
     model = settings['llmModel']
     base_url = settings['llmBaseUrl']
     cap = capabilities(base_url, model)

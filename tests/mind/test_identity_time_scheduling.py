@@ -121,9 +121,9 @@ def test_unfinished_activity_does_not_need_another_model_call(mind):
 
 def test_task_memory_does_not_revive_old_casual_requests(mind):
     r,c,_,ids,_=mind
-    observe(c,ids[0],'之前闲聊要求：请发贴纸',conversationId='same-room')
-    assert '请发贴纸' in json.dumps(r.snapshot(ids[0],'任务结果','now','same-room'),ensure_ascii=False)
-    snap=r.snapshot(ids[0],'任务结果','run-current:result','same-room',task_run_id='run-current')
+    observe(c,ids[0],'之前闲聊要求：请发贴纸',conversationId='port-hub')
+    assert '请发贴纸' in json.dumps(r.snapshot(ids[0],'之前请发贴纸','now','port-hub'),ensure_ascii=False)
+    snap=r.snapshot(ids[0],'任务结果','run-current:result','port-hub',task_run_id='run-current')
     assert '请发贴纸' not in json.dumps(snap,ensure_ascii=False)
 
 
@@ -132,7 +132,7 @@ def test_checkpoint_uses_actual_task_id_when_retrieving_memory(mind,monkeypatch)
     from backend.mind.cognition_models import Experience
     from sqlalchemy import select
     r,c,_,ids,_=mind
-    observe(c,ids[0],'当前任务关键要求',conversationId='same-room')
+    observe(c,ids[0],'当前任务关键要求',conversationId='port-hub')
     with session_scope() as s:
         experience=s.scalar(select(Experience).where(Experience.actor_id==ids[0],Experience.text=='当前任务关键要求'))
         experience.run_id='run-current'
@@ -144,7 +144,7 @@ def test_checkpoint_uses_actual_task_id_when_retrieving_memory(mind,monkeypatch)
         return result
     monkeypatch.setattr(r,'snapshot',capture)
     asyncio.run(r.think(ids[0],'call-xyz:checkpoint','工具失败，请重评',mode='task',
-        conversation_id='same-room',actions=['execute'],task_run_id='run-current'))
+        conversation_id='port-hub',actions=['execute'],task_run_id='run-current'))
     assert observed[0][0]=='run-current'
     assert '当前任务关键要求' in observed[0][1]
 
@@ -153,10 +153,10 @@ def test_mistaken_name_in_user_request_remains_attributed_to_user(mind):
     from uuid import uuid4
     r,c,_,ids,_=mind
     run,_=c.store.create({'actorId':ids[0],'actors':[{'id':ids[0],'name':'当前人物'}],
-        'mode':'chat','collaborative':False,'conversationId':'identity-room',
+        'mode':'chat','collaborative':False,'conversationId':'port-hub',
         'prompt':'乙，早上好','history':[]},uuid4().hex)
     c.cognition.pump()
-    snapshot=r.snapshot(ids[0],'早上好',run['id']+':chat','identity-room')
+    snapshot=r.snapshot(ids[0],'早上好',run['id']+':chat','port-hub')
     assert any(row['text']=='乙，早上好' and row['speakerId']=='commander'
         for row in snapshot['memory']['working'])
     legacy_context=c.cognition.context(ids[0],'早上好')

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { api, useWorkspace } from "./shared/api";
-import type { Agent, Conversation, Run } from "./shared/types";
+import type { Agent, Conversation, Run, Message } from "./shared/types";
 import Icon from "./shared/Icon.vue";
 import Avatar from "./shared/Avatar.vue";
 import { artworkUrl } from './shared/assets';
@@ -17,6 +17,8 @@ import ConversationList from './features/chat/ConversationList.vue';
 import BackdropSettings from './features/chat/BackdropSettings.vue';
 import { backdropPosition } from './features/chat/backdropPreferences';
 import MomentsPage from './features/social/MomentsPage.vue';
+import { useChatLayout } from './features/chat/useChatLayout';
+const { layout: chatLayout, panel: chatPanel, listWidth, inputHeight, maxList, maxInput, resize, adjust, reset } = useChatLayout();
 const { workspace, runs, online, error, streams, refresh, start, stop } =
   useWorkspace();
 const methodActor = ref<Agent>();
@@ -33,10 +35,19 @@ const draft = ref(""),
   sending = ref(false),
   composing = ref(false),
   notice = ref("");
-const modeMenu = ref<HTMLDetailsElement>();
-function setMode(value: string) { mode.value = value; modeMenu.value?.removeAttribute('open'); }
-watch(activeId, () => modeMenu.value?.removeAttribute('open'));
-const pendingRequest = ref<{ fingerprint: string; id: string }>();
+const composerTool = ref<'attachment' | 'sticker' | 'mode' | null>(null);
+const composerTools = ref<HTMLElement>();
+function setMode(value: string) { mode.value = value; composerTool.value = null; }
+function setTool(tool: NonNullable<typeof composerTool.value>, open: boolean) { composerTool.value = open ? tool : null; }
+function closeToolOutside(event: PointerEvent) {
+  if (event.target instanceof Node && !composerTools.value?.contains(event.target)) composerTool.value = null;
+}
+watch(activeId, () => { composerTool.value = null; });
+type SendPayload = { conversationId: string; content: string; attachments: string[]; mentions: string[];
+  mode: string; collaborative: boolean; requestId: string };
+type DisplayMessage = Message & { streaming: boolean; delivery?: 'sending' | 'sent' | 'failed'; deliveryError?: string; requestId?: string };
+type Outgoing = DisplayMessage & { conversationId: string; requestId: string; payload: SendPayload };
+const outgoing = ref<Outgoing[]>([]);
 const routeLabels: Record<string, string> = { chat:'闲聊', followup:'结果追问', task:'任务',
   swarm:'协作', guidance:'任务引导', clarify:'澄清' };
 const scroller = ref<HTMLElement>(),
@@ -81,7 +92,7 @@ const backdropUnavailable = ref(false);
 watch(() => peer.value?.illustrationUrl, () => { backdropFailed.value = false; backdropUnavailable.value = false; });
 const messages = computed(() => data.value?.messages[activeId.value] || []);
 const visibleMessages = computed(() => {
-  const rows = messages.value.slice(-pageSize.value).map(m => {
+  const rows: DisplayMessage[] = messages.value.slice(-pageSize.value).map(m => {
     const foreign = conversation.value?.kind === 'dm' && m.speakerId !== 'commander' && !conversation.value.memberIds.includes(m.speakerId);
     return { ...m, ...(foreign ? { type: 'task_notice', body: '历史协作回传已保留，请在工作记录中查看。' } : {}), streaming: false };
   });
@@ -93,7 +104,17 @@ const visibleMessages = computed(() => {
     if (index < 0) rows.push(row);
     else rows[index] = row;
   }
+  for (const pending of outgoing.value) {
+    if (pending.conversationId === activeId.value && !messages.value.some(m => m.metadata?.requestId === pending.requestId)) {
+      rows.push(pending);
+    }
+  }
   return rows;
+});
+watch(workspace, value => {
+  if (!value) return;
+  const confirmed = new Set(Object.values(value.data.messages).flat().map(m => m.metadata?.requestId).filter(Boolean));
+  outgoing.value = outgoing.value.filter(m => !confirmed.has(m.requestId));
 });
 const activeRuns = computed(() =>
   runs.value.filter((r) => r.conversationId === activeId.value),
@@ -106,23 +127,47 @@ const working = computed(() =>
 const taskRuns = computed(() =>
   activeRuns.value.filter((r) => r.mode !== "chat"),
 );
+const workRuns = computed(() => runs.value.filter(r => r.mode !== 'chat'));
+const attentionRuns = computed(() => workRuns.value.filter(r =>
+  ['waiting_approval', 'failed', 'paused'].includes(r.status)));
 const selectedRun = computed(
   () =>
-    runs.value.find((r) => r.id === selectedRunId.value && r.mode !== 'chat') || taskRuns.value[0],
+    workRuns.value.find((r) => r.id === selectedRunId.value) || attentionRuns.value[0] || taskRuns.value[0] || workRuns.value[0],
 );
-const attention = computed(
-  () =>
-    runs.value.filter((r) =>
-      ["waiting_approval", "failed", "paused"].includes(r.status),
-    ).length,
-);
+const attention = computed(() => attentionRuns.value.length);
+// Only report failures observed during this session. Historical runs are audit
+// records, and an interrupted mind cycle is superseded by a new event.
+const chatFailure = ref<Run>();
+let chatFailureTimer: ReturnType<typeof setTimeout> | undefined;
+const observedRunStates = new Map<string, string>();
+let observedInitialRuns = false;
+function dismissChatFailure() {
+  clearTimeout(chatFailureTimer);
+  chatFailure.value = undefined;
+}
+watch(runs, rows => {
+  const latest = rows.filter(r => r.mode === 'chat' && r.conversationId === activeId.value)
+    .sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0];
+  if (chatFailure.value && (!latest || latest.id !== chatFailure.value.id || latest.status !== 'failed')) dismissChatFailure();
+  if (observedInitialRuns && latest?.status === 'failed' && observedRunStates.get(latest.id) !== 'failed'
+      && !/MindInterrupted/.test(latest.error || '')) {
+    dismissChatFailure();
+    chatFailure.value = latest;
+    chatFailureTimer = setTimeout(dismissChatFailure, 15000);
+  }
+  if (workspace.value) observedInitialRuns = true;
+  for (const r of rows) observedRunStates.set(r.id, r.status);
+});
+watch(activeId, dismissChatFailure);
+onUnmounted(dismissChatFailure);
 const activeStreams = computed(() =>
   Object.entries(streams).filter(([key]) =>
     activeRuns.value.some((r) => key.startsWith(r.id + ":")),
   ),
 );
-const teamTask = computed(() => activeRuns.value.find(r => r.teamConversationId === activeId.value));
-const guidingTask = computed(() => teamTask.value && !['completed','cancelled'].includes(teamTask.value.status));
+watch(showSettings, open => { if (open) { showWork.value = false; methodActor.value = undefined; showMembers.value = false; composerTool.value = null; } });
+watch(showWork, open => { if (open) { showSettings.value = false; methodActor.value = undefined; showMembers.value = false; composerTool.value = null; } });
+watch(methodActor, actor => { if (actor) { showSettings.value = false; showWork.value = false; showMembers.value = false; composerTool.value = null; } });
 function insertSticker(label:string) {
   draft.value = draft.value.replace(/\[表情:[^\]\n]*\]/g, '').trim();
   draft.value += (draft.value ? '\n\n' : '') + `[表情:${label}]`;
@@ -147,7 +192,7 @@ const time = (value: string) =>
     minute: "2-digit",
   });
 function openRun(run?: Run) {
-  selectedRunId.value = run?.id || taskRuns.value[0]?.id || "";
+  selectedRunId.value = run?.id || attentionRuns.value[0]?.id || taskRuns.value[0]?.id || workRuns.value[0]?.id || "";
   showWork.value = true;
 }
 async function removeGroup() {
@@ -241,39 +286,60 @@ async function send() {
   )
     return;
   const content = draft.value.trim();
-  const fingerprint = JSON.stringify([activeId.value, content, attachmentIds.value, mode.value]);
-  if (pendingRequest.value?.fingerprint !== fingerprint) pendingRequest.value = { fingerprint, id: crypto.randomUUID() };
+  const requestId = crypto.randomUUID();
+  const payload: SendPayload = { conversationId: activeId.value, content, attachments: [...attachmentIds.value],
+    mentions: conversation.value.kind === 'group' ? agents.value.filter(a => content.includes(`@${a.name}`)).map(a => a.id) : [],
+    mode: mode.value, collaborative: mode.value === 'swarm', requestId };
+  const message: Outgoing = { id: 'outgoing-' + requestId, requestId, payload, conversationId: activeId.value,
+    body: content, speakerId: userId.value, type: 'text', createdAt: new Date().toISOString(), streaming: false, delivery: 'sending' };
+  outgoing.value.push(message);
+  draft.value = '';
+  attachmentIds.value = [];
+  composerTool.value = null;
+  atBottom.value = true;
+  void nextTick(scrollBottom);
+  await deliver(message);
+}
+async function deliver(message: Outgoing) {
+  if (sending.value) return;
   sending.value = true;
+  dismissChatFailure();
   notice.value = "";
+  message.delivery = 'sending';
+  message.deliveryError = '';
+  const update = (fields: Partial<Outgoing>) => {
+    const row = outgoing.value.find(m => m.requestId === message.requestId);
+    if (row) Object.assign(row, fields);
+  };
   try {
     const result = await api<{ runId: string | null; conversationId: string; route?:{kind:string;status:string}; proposalId?:string }>(
       "/api/messages/send",
-      {
-        conversationId: activeId.value,
-        content,
-        attachments: attachmentIds.value,
-        mentions: conversation.value.kind === 'group'
-          ? agents.value.filter(a => content.includes(`@${a.name}`)).map(a => a.id) : [],
-        mode: mode.value === "swarm" ? "swarm" : mode.value,
-        collaborative: mode.value === "swarm",
-        requestId: pendingRequest.value.id,
-      },
+      message.payload,
     );
-    pendingRequest.value = undefined;
-    draft.value = "";
-    attachmentIds.value = [];
-    activeId.value = result.conversationId;
+    update({ delivery: 'sent', conversationId: result.conversationId });
+    if (activeId.value === message.payload.conversationId) activeId.value = result.conversationId;
     if (result.runId && (['task','swarm','guidance'].includes(result.route?.kind || '')
-      || mode.value === 'task' || mode.value === 'swarm')) selectedRunId.value = result.runId;
-    await refresh();
-    atBottom.value = true;
-    await nextTick();
-    scrollBottom();
+      || message.payload.mode === 'task' || message.payload.mode === 'swarm')) selectedRunId.value = result.runId;
+    // Confirmation refresh is independent of the composer and its next draft.
+    void refresh().catch(() => {});
   } catch (e) {
-    notice.value = (e as Error).message;
+    update({ delivery: 'failed', deliveryError: (e as Error).message });
   } finally {
     sending.value = false;
   }
+}
+function editOutgoing(requestId: string) {
+  const message = outgoing.value.find(m => m.requestId === requestId);
+  if (!message || draft.value) return;
+  draft.value = message.body;
+  attachmentIds.value = [...message.payload.attachments];
+  mode.value = message.payload.mode;
+  // Keep the failed item for same-ID retries; editing creates a distinct request.
+  outgoing.value = outgoing.value.filter(m => m.requestId !== requestId);
+}
+function retryOutgoing(requestId: string) {
+  const message = outgoing.value.find(m => m.requestId === requestId);
+  if (message) void deliver(message);
 }
 async function decideProposal(requestId:string, action:'confirm'|'cancel') {
   try {
@@ -311,6 +377,10 @@ async function changeRole(id: string, role: string) {
 }
 function globalKey(e: KeyboardEvent) {
   if (e.key === "Escape") {
+    const trigger = composerTools.value?.querySelector<HTMLButtonElement>('[aria-expanded="true"]');
+    composerTool.value = null;
+    trigger?.focus();
+    methodActor.value = undefined;
     showSettings.value = false;
     showWork.value = false;
     showMembers.value = false;
@@ -336,7 +406,7 @@ function globalKey(e: KeyboardEvent) {
 }
 let focusBefore: Element | null = null;
 watch(
-  () => showSettings.value || showWork.value,
+  () => showSettings.value || showWork.value || !!methodActor.value,
   async (open) => {
     if (open) {
       focusBefore = document.activeElement;
@@ -348,6 +418,7 @@ watch(
   },
 );
 onMounted(() => {
+  document.addEventListener('pointerdown', closeToolOutside);
   document.documentElement.classList.toggle(
     "reduced-motion",
     localStorage.getItem("azur-reduced-motion") === "true",
@@ -366,6 +437,7 @@ onMounted(() => {
   void start().catch(() => {});
   document.addEventListener("keydown", globalKey);
 });
+onUnmounted(() => document.removeEventListener('pointerdown', closeToolOutside));
 onUnmounted(() => {
   stop();
   document.removeEventListener("keydown", globalKey);
@@ -414,17 +486,6 @@ onUnmounted(() => {
       <header class="topbar">
         <span class="wordmark">JUUSTAGRAM</span
         >
-        <div class="topbar-status">
-          <span class="status-dot" :class="{ connected: online }"></span
-          >{{ online ? "本地已连接" : "重新连接中"
-          }}<button
-            class="icon-button"
-            aria-label="查看任务"
-            @click="openRun()"
-          >
-            <Icon name="activity" />
-          </button>
-        </div>
       </header>
       <div v-if="!workspace" class="loading-view">
         <div class="loading-emblem">JUUS<span>//</span></div>
@@ -448,12 +509,15 @@ onUnmounted(() => {
             <Icon name="close" />
           </button>
         </div>
-        <section v-show="view === 'chat'" class="chat-layout">
+        <section v-show="view === 'chat'" ref="chatLayout" class="chat-layout" :style="{ '--conversation-width': listWidth + 'px' }">
           <ConversationList
             :snapshot="data!" :runs="runs" :agents="agents" :active-id="activeId" :user-id="userId"
             @select="selectConversation" @created="async id => { await refresh(); activeId=id; mobileChat=true; }"
           />
-          <section class="chat-panel" v-if="conversation">
+          <div class="layout-divider" role="separator" tabindex="0" aria-label="调整会话列表宽度" aria-orientation="vertical"
+            :aria-valuenow="Math.round(listWidth)" :aria-valuemin="220" :aria-valuemax="Math.round(maxList)"
+            @pointerdown="resize('list', $event)" @keydown="adjust('list', $event)" @dblclick="reset('list')" />
+          <section ref="chatPanel" class="chat-panel" v-if="conversation">
             <header class="chat-header">
               <button
                 class="icon-button mobile-back"
@@ -477,15 +541,6 @@ onUnmounted(() => {
                 <BackdropSettings v-if="conversation.kind === 'dm' && peer?.illustrationUrl" :key="peer.id" :actor="peer" />
                 <button v-if="conversation.kind === 'group' && conversation.id !== 'port-hub'" class="text-button danger" @click="removeGroup">删除群聊</button>
                 <button
-                  class="icon-button"
-                  aria-label="查看工作记录"
-                  @click="openRun()"
-                >
-                  <Icon name="folder" /><span
-                    v-if="taskRuns.some((r) => r.status === 'waiting_approval')"
-                    class="notification-dot"
-                  ></span></button
-                ><button
                   class="icon-button"
                   aria-label="查看成员资料"
                   @click="showMembers = !showMembers"
@@ -559,6 +614,12 @@ onUnmounted(() => {
                     </div>
                     <details v-if="m.type === 'task_progress' && !m.metadata?.expression"><summary>历史工作回复</summary><div class="message-bubble">{{ m.body }}</div></details>
                     <SpeechBubbles v-else-if="m.type !== 'route_proposal'" :text="m.body" :streaming="m.streaming" :self="m.speakerId === userId" :single="m.speakerId === userId" :message-id="m.id" :conversation-id="activeId" @reveal="speechRevealed" />
+                    <div v-if="m.delivery === 'sending'" class="message-delivery" role="status">发送中…</div>
+                    <div v-else-if="m.delivery === 'failed'" class="message-delivery message-delivery--failed" role="alert">
+                      <span :title="m.deliveryError">发送失败</span>
+                      <button type="button" :disabled="sending" @click="retryOutgoing(m.requestId!)">重试</button>
+                      <button type="button" :disabled="!!draft" @click="editOutgoing(m.requestId!)">编辑</button>
+                    </div>
                     <a v-for="file in m.metadata?.attachments || []" :key="file.id" :href="`/api/attachments/${file.id}?conversationId=${encodeURIComponent(file.conversationId)}`" target="_blank" rel="noreferrer">附件 · {{file.name}}</a>
                   </div>
                 </article>
@@ -605,17 +666,10 @@ onUnmounted(() => {
                   </div>
                   <Icon name="next" />
                 </button>
-                <div
-                  v-for="r in activeRuns
-                    .filter((r) => r.mode === 'chat' && ['failed', 'paused'].includes(r.status))
-                    .slice(0, 1)"
-                  :key="r.id"
-                  class="error-message"
-                >
-                  {{ r.error || statuses[r.status]
-                  }}<button class="text-button" @click="selectedRunId = r.id; showWork = true">
-                    查看并继续
-                  </button>
+                <div v-if="chatFailure" class="error-message" role="alert">
+                  {{ chatFailure.error || '回复暂时失败，请重新发送。' }}
+                  <button class="text-button" @click="draft = chatFailure!.prompt; dismissChatFailure()">重新编辑</button>
+                  <button class="icon-button" aria-label="关闭回复错误提示" @click="dismissChatFailure"><Icon name="close" /></button>
                 </div>
               </div>
             </div>
@@ -653,13 +707,15 @@ onUnmounted(() => {
                 :conversation-id="conversation.id" @changed="refresh" />
             </div>
             <form class="composer" @submit.prevent="send">
-              <div class="composer-tools" aria-label="消息工具">
-                <AttachmentPicker :conversation-id="activeId" v-model="attachmentIds" />
-                <StickerPicker :key="activeId" @select="insertSticker" />
-                <details ref="modeMenu" class="composer-mode composer-tool">
-                <summary :aria-label="`处理方式：${mode === 'auto' ? '自动判断' : mode === 'chat' ? '闲聊' : mode === 'task' ? '任务' : '协作'}`" :title="`处理方式：${mode === 'auto' ? '自动判断' : mode === 'chat' ? '闲聊' : mode === 'task' ? '任务' : '协作'}`"><Icon :name="mode === 'auto' ? 'activity' : mode === 'chat' ? 'chat' : mode === 'task' ? 'folder' : 'users'" :size="17" /></summary>
-                <div class="composer-tool-panel">
-                  <p v-if="guidingTask" class="field-hint">当前任务可继续引导或询问进度。</p>
+              <div class="composer-divider" role="separator" tabindex="0" aria-label="调整输入框高度" aria-orientation="horizontal"
+                :aria-valuenow="Math.round(inputHeight)" :aria-valuemin="48" :aria-valuemax="Math.round(maxInput)"
+                @pointerdown="resize('input', $event)" @keydown="adjust('input', $event)" @dblclick="reset('input')" />
+              <div ref="composerTools" class="composer-tools" aria-label="消息工具">
+                <AttachmentPicker :conversation-id="activeId" v-model="attachmentIds" :open="composerTool === 'attachment'" @update:open="setTool('attachment',$event)" />
+                <StickerPicker :key="activeId" :open="composerTool === 'sticker'" @update:open="setTool('sticker',$event)" @select="insertSticker" />
+                <div class="composer-mode composer-tool">
+                <button type="button" class="composer-tool-button" :aria-expanded="composerTool === 'mode'" @click="setTool('mode',composerTool !== 'mode')" :aria-label="`处理方式：${mode === 'auto' ? '自动判断' : mode === 'chat' ? '闲聊' : mode === 'task' ? '任务' : '协作'}`" :title="`处理方式：${mode === 'auto' ? '自动判断' : mode === 'chat' ? '闲聊' : mode === 'task' ? '任务' : '协作'}`"><Icon :name="mode === 'auto' ? 'activity' : mode === 'chat' ? 'chat' : mode === 'task' ? 'folder' : 'users'" :size="17" /></button>
+                <div v-if="composerTool === 'mode'" class="composer-tool-panel">
                 <button
                   type="button"
                   v-for="item in [
@@ -675,7 +731,7 @@ onUnmounted(() => {
                   <Icon :name="item.icon" :size="15" />{{ item.text }}</button
                 >
                 </div>
-              </details>
+              </div>
               </div>
               <div class="composer-input">
                 <div v-if="mentionOptions.length" class="mention-options" aria-label="提及人物">
@@ -686,11 +742,13 @@ onUnmounted(() => {
                 </div>
                 <textarea
                   v-model="draft"
+                  :style="{ height: inputHeight + 'px' }"
                   rows="2"
                   :placeholder="
                     mode === 'task' || mode === 'swarm' ? '描述委托、文件位置和期望结果…' : '想说些什么呢…'
                   "
                   aria-label="消息输入"
+                  title="Enter 发送 · Shift + Enter 换行"
                   @keydown="keydown"
                   @compositionstart="composing = true"
                   @compositionend="composing = false"
@@ -702,13 +760,6 @@ onUnmounted(() => {
                   <Icon :name="sending ? 'loading' : 'send'" /><span>发送</span>
                 </button>
               </div>
-              <footer class="composer-footer">
-                <span>{{
-                  mode === 'auto' ? '自动判断聊天、追问或委托 · 工具权限仍按任务审批'
-                    : mode === 'chat' ? '仅聊天 · 不操作文件' : '任务内自主执行 · 重要操作集中确认'
-                }}</span
-                ><span>Enter 发送 · Shift + Enter 换行</span>
-              </footer>
             </form>
           </section>
           <div v-else class="empty-state">

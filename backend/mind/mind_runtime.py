@@ -141,6 +141,9 @@ class MindRuntime:
         if background and self.background_blocked(revision, respect_pause=limited):
             raise MindInterrupted('后台认知已让出前台。')
         cfg = settings or self.c.settings_loader()
+        context_trace = payload.get('contextTraceId') or (payload.get('snapshot') or {}).get('contextTraceId')
+        if context_trace:
+            cfg = {**cfg, '_contextTraceId': context_trace}
         if not cfg.get('llmApiKey') and not cfg.get('llmBaseUrl','').startswith(('http://127.0.0.1','http://localhost')):
             raise MindInterrupted('未配置模型，计划保持待处理。')
         self.control()
@@ -163,6 +166,12 @@ class MindRuntime:
             'express':'按给定人物意图生成自然的远程文字消息。只输出 JSON：segments 为1至3段文字，普通短答默认一段，只有连续独立发言才拆分；sourceIds 原样复制指定来源。最多一张已知表情且独立成段。不泄露未分享的私事，不复述心理字段。只陈述允许公开的事实，不声称真实工具成功。',
         }
         instruction = rules.get(kind,'仅依据给定资料，返回结构化结果。')
+        if kind == 'compact':
+            instruction = ('合并理解和参与判断，保留人物关注点和当前话意。只允许 speak/wait/end。'
+                '涉及工具、邀请、执行、目标变更或新承诺时 needsFullChain=true；不得在此快捷流程执行这些动作。'
+                '给出的可见来源已足以回答的旧资料追问不需要新工具；不要仅因谈到文件就要求完整执行流程。'
+                '返回 frame、intent、needsFullChain。来源只能选自 snapshot.allowedSources。'
+                '群聊仅在回答未决问题、有新增事实或不同观点时发言；改写附和选择沉默。')
         if kind=='decide' and payload.get('mode')=='social':
             instruction+='\n群聊参与判断优先于表达：只有尚未回答的问题、具体的新信息、真实的不同意见或新的相关问题才值得接话。最近几句已经表示赞同、总结、待命或等别人说话时，选择 wait/end；改写别人说过的话、再感谢一次、再邀请大家发言不算新内容。不要为了轮流说话而选择 speak。用户只是群成员之一；最近发言者是同伴时，优先回应其具体观点或自己的相关目标，不把同伴对话转成等待用户回来、回复或批准。'
         if schema:
@@ -178,8 +187,10 @@ class MindRuntime:
         error_kind = ''
         complex_call = kind=='decide' and bool(payload.get('frame',{}).get('alternativeInterpretation') or
             payload.get('frame',{}).get('valueTension') or payload.get('mode')=='task' and payload.get('frame',{}).get('unknowns'))
-        mind_stage = kind in {'profile','understand','decide','reflect'}
+        mind_stage = kind in {'profile','understand','decide','reflect','compact'}
         output_tokens = cfg.get('_structuredOutputTokens') or (8192 if complex_call else 4096 if mind_stage else 2400)
+        if context_trace and getattr(self.c, 'context', None):
+            self.c.context.record_call_input(context_trace, messages, kind, output_tokens)
         timeout = 70 if mind_stage else 40
         self.active_calls += 1
         self.peak_calls = max(self.peak_calls,self.active_calls)
@@ -329,11 +340,26 @@ class MindRuntime:
         from backend.chat.conversation_scope import current_dialogue_text, relevance_terms, is_greeting
         query=current_dialogue_text(prompt)
         dialogue=mode in {'chat','social','moments','life-share'}
+        try:
+            preset=str(self.c.settings_loader().get('dialoguePreset') or 'balanced')
+        except Exception:
+            preset='balanced'
+        if preset not in {'compact','balanced','rich'}:
+            preset='balanced'
+        memory_row_limit={'compact':6,'balanced':12,'rich':18}[preset] if dialogue else 12
+        category_limit={'compact':3,'balanced':5,'rich':6}[preset] if dialogue else 5
         terms=relevance_terms(query) if dialogue else set(re.findall(r'[\u4e00-\u9fff]|\w+',prompt.lower()))
         grouped={k:[] for k in ('episodic','semantic','procedural','prospective','working')}
+        context_bundle = None
+        if getattr(self.c, 'context', None):
+            from backend.context.contracts import ContextRequest
+            context_bundle = self.c.context.collect(ContextRequest(actor_id, conversation_id, mode,
+                query, source, task_run_id, preset, public,
+                include_task_history=include_task_memory is True,
+                include_prior_task_history=bool(related_run_id)))
         with session_scope() as s:
             recent=s.scalars(select(Experience).where(Experience.actor_id==actor_id,Experience.forgotten.is_(False))
-                .order_by(Experience.at.desc()).limit(100)).all()
+                .order_by(Experience.at.desc())).all()
             rows=[{'id':r.id,'text':r.text,'kind':r.kind,'at':r.at,'runId':r.run_id,'data':r.data} for r in recent]
             if related_run_id:
                 selected=s.scalars(select(Experience).where(Experience.actor_id==actor_id,
@@ -347,12 +373,15 @@ class MindRuntime:
         if conversation_id:
             rows=[r for r in rows if r['data'].get('shareable') or
                 r['data'].get('conversationId')==conversation_id or
-                related_run_id and r['kind']=='outcome' and r['runId']==related_run_id and r['data'].get('verified') or
+                not public and related_run_id and r['kind']=='outcome' and r['runId']==related_run_id and r['data'].get('verified') or
                 not public and not r['data'].get('conversationId') and
                     r['kind'] not in {'speech','request','outcome'}]
         elif public:
-            rows=[r for r in rows if r['data'].get('shareable') or
-                related_run_id and r['kind']=='outcome' and r['runId']==related_run_id and r['data'].get('verified')]
+            rows=[r for r in rows if r['data'].get('shareable')]
+        if context_bundle:
+            visible = self.c.context.visible(context_bundle.request)
+            visible_exp = {v['grant'].get('experienceId') for v in visible.values()}
+            rows = [r for r in rows if r['id'] in visible_exp]
         if task_run_id:
             # A new task does not inherit earlier requests or result reports.
             # Explicit follow-ups may cite prior verified outcomes.
@@ -391,9 +420,18 @@ class MindRuntime:
             sum(t in r['text'].lower() for t in terms)+int(any(t in r['text'] and t in goal_text for t in terms)),
             r['data'].get('importance',0),r['at']),reverse=True)
         allowed={source,*profile['sources']}
-        for r in rows[:12]:
+        if context_bundle:
+            for e in context_bundle.documents + context_bundle.experiences:
+                category = 'working' if e.get('kind') == 'request' else 'episodic'
+                grouped[category].append({'id': e.get('experienceId') or e['sourceId'], 'text': e['text'],
+                    'sourceKind': e.get('provenance'), 'speakerId': e.get('speakerId'),
+                    'ownSpeech': e.get('ownSpeech'), 'source': e})
+            allowed.update(context_bundle.allowed_sources)
+            # The bundle already ranked and deduplicated these records.
+            rows = []
+        for r in rows[:memory_row_limit]:
             category='working' if r['kind']=='request' else 'episodic'
-            if len(grouped[category])>=5:continue
+            if len(grouped[category])>=category_limit:continue
             grouped[category].append({'id':r['id'],'text':r['text'][:500],
                 'correction':r['data'].get('userCorrection'),'sourceKind':r['data'].get('sourceKind',r['kind']),
                 'speakerId':r['data'].get('speakerId'),
@@ -443,7 +481,8 @@ class MindRuntime:
             'emotion':emotion if not public or set((emotion or {}).get('sourceIds',[]))<=allowed else None,
             'mood':{k:v for k,v in mood.items() if k in {'text','intensity'}},
             'current':{'id':source,'text':prompt},'allowedSources':sorted(allowed),
-            'conversationId':conversation_id,'sessionKey':key(actor_id,conversation_id or 'private-mind')}
+            'conversationId':conversation_id,'sessionKey':key(actor_id,conversation_id or 'private-mind'),
+            'contextTraceId': context_bundle.trace_id if context_bundle else ''}
 
     async def think(self, actor_id, source, prompt, *, mode='chat', conversation_id='', public=False,
                     background=False, actions=None, task_run_id='', include_task_memory=None,related_run_id=''):
@@ -506,9 +545,32 @@ class MindRuntime:
                         if (value.goalUpdate.status!='active' and value.goalId==value.goalUpdate.goalId
                                 and value.action in {'read','practice','rest','reflect','invite','stroll','meal','hobby','continue'}):
                             raise ValueError('不能为本次即将结束或暂停的目标启动活动；若是独立休息或整理，goalId 留空，否则先保持目标 active。')
-                frame=await self.call(actor_id,'understand',snap,MindFrame,background,revision,validator=validate_frame)
-                decision=await self.call(actor_id,'decide',{'snapshot':snap,'frame':frame.model_dump(),
-                    'allowedActions':allowed_actions,'mode':mode},DecisionIntent,background,revision,validator=validate_decision)
+                from backend.chat.conversation_scope import current_dialogue_text
+                compact_actions = [a for a in allowed_actions if a in {'speak', 'wait', 'end'}]
+                compact = (self.c.settings_loader().get('dialoguePreset') == 'compact' and
+                    mode in {'chat', 'social'} and compact_actions and
+                    not __import__('re').search(r'邀请|建群|执行|承诺|约定|提醒我|帮我|请你|工具|目标',
+                        current_dialogue_text(prompt)))
+                frame = decision = None
+                if compact:
+                    from backend.mind.mind_contracts import CompactThought
+                    def check_compact(value):
+                        validate_frame(value.frame)
+                        if not value.needsFullChain:
+                            if value.intent.action not in {'speak', 'wait', 'end'}:
+                                value.needsFullChain = True
+                            else:
+                                validate_decision(DecisionIntent.model_validate(value.intent.model_dump()))
+                    combined = await self.call(actor_id, 'compact', {'snapshot': snap,
+                        'allowedActions': compact_actions, 'fullChainActions': allowed_actions, 'mode': mode}, CompactThought,
+                        background, revision, validator=check_compact)
+                    if not combined.needsFullChain:
+                        frame = MindFrame.model_validate(combined.frame.model_dump())
+                        decision = DecisionIntent.model_validate(combined.intent.model_dump())
+                if frame is None:
+                    frame=await self.call(actor_id,'understand',snap,MindFrame,background,revision,validator=validate_frame)
+                    decision=await self.call(actor_id,'decide',{'snapshot':snap,'frame':frame.model_dump(),
+                        'allowedActions':allowed_actions,'mode':mode},DecisionIntent,background,revision,validator=validate_decision)
                 if background and self.background_blocked(revision):raise MindInterrupted('后台状态已过期。')
                 with session_scope() as s:
                     profile=s.get(MindProfile,actor_id)
@@ -524,6 +586,7 @@ class MindRuntime:
                     row=s.get(MindDecision,did)
                     row.status='committed'
                     row.data={**row.data,'id':did,'frame':frame.model_dump(),'intent':decision.model_dump(),
+                        'contextTraceId': snap.get('contextTraceId'),
                         'sourceIds':list(dict.fromkeys([*frame.sourceIds,*decision.sourceIds])),
                         'stateVersion':snap['version']+1,
                         'publication':'considered' if mode=='social' else 'not_applicable'}

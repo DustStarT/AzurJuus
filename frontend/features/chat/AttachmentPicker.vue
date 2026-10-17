@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {ref,watch} from 'vue';
 import Icon from '../../shared/Icon.vue';
-const props=defineProps<{conversationId:string;modelValue:string[]}>();
-const emit=defineEmits<{'update:modelValue':[string[]]}>();
+const props=defineProps<{conversationId:string;modelValue:string[];open:boolean}>();
+const emit=defineEmits<{'update:modelValue':[string[]];'update:open':[boolean]}>();
 const files=ref<{id:string;name:string}[]>([]),error=ref(''),busy=ref(false);
 watch(()=>props.conversationId,()=>{files.value=[];emit('update:modelValue',[]);});
 watch(()=>props.modelValue,ids=>{files.value=files.value.filter(f=>ids.includes(f.id));});
@@ -22,14 +22,14 @@ async function upload(event:Event){
 function remove(id:string){files.value=files.value.filter(f=>f.id!==id);emit('update:modelValue',files.value.map(f=>f.id));}
 </script>
 <template>
-  <details class="attachments composer-tool">
-    <summary aria-label="图片和文件" title="图片和文件"><Icon name="image" :size="17" /><span v-if="files.length" class="tool-count">{{files.length}}</span></summary>
-    <div class="composer-tool-panel">
+  <div class="attachments composer-tool">
+    <button type="button" class="composer-tool-button" aria-label="图片和文件" title="图片和文件" :aria-expanded="open" @click="emit('update:open',!open)"><Icon name="image" :size="17" /><span v-if="files.length" class="tool-count">{{files.length}}</span></button>
+    <div v-if="open" class="composer-tool-panel">
       <label class="attachment-upload">{{busy?'上传中…':'选择图片或文件'}}<input aria-label="上传图片或文件" type="file" multiple :disabled="busy" accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.xlsx,.txt,.md,.csv,.py,.json" @change="upload"></label>
       <div v-for="file in files" :key="file.id" class="attachment-file"><span>{{file.name}}</span><button type="button" :aria-label="`移除${file.name}`" @click="remove(file.id)">×</button></div>
       <span v-if="error" role="alert">{{error}}</span>
     </div>
-  </details>
+  </div>
 </template>
 <style scoped>
 .attachments input{position:absolute;width:1px;height:1px;opacity:0}

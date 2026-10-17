@@ -1,6 +1,18 @@
+import { reactive } from 'vue';
 type Job = {start:()=>void};
 const queues = new Map<string, Job[]>();
-export const liveSpeechIds = new Set<string>();
+export const liveSpeechIds = reactive(new Set<string>());
+const claimed = new Set<string>();
+export function markLiveSpeech(id: string) {
+  if (id && !claimed.has(id)) liveSpeechIds.add(id);
+}
+export function claimLiveSpeech(id: string) {
+  if (!liveSpeechIds.delete(id) || claimed.has(id)) return false;
+  claimed.add(id);
+  // Keep duplicate delivery notices from restarting already shown bubbles.
+  if (claimed.size > 8000) claimed.delete(claimed.values().next().value!);
+  return true;
+}
 export function enqueueSpeech(key:string, start:(done:()=>void)=>void) {
   const queue = queues.get(key) || [];
   queues.set(key, queue);

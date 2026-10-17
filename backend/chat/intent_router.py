@@ -101,7 +101,8 @@ class IntentRouter:
                     r'(?:请|帮我|麻烦).{0,12}(?:读取|查看|打开|扫描|概括|总结|修改|写入)', content))
                 if not new_read_request and (DEICTIC.search(content) or FILE_NAME.search(content)):
                     peer=[aid for aid in members if aid in allowed][:1]
-                    evidence=resolve_task_reference(self.store,peer[0],content,recent) if peer else None
+                    evidence=resolve_task_reference(self.store,peer[0],content,recent,
+                        conversation_id=conversation_id) if peer else None
                     if evidence and not evidence.get('ambiguous'):
                         kind='followup'
                         selected=peer

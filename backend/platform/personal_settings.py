@@ -49,6 +49,7 @@ def install_personal_settings(app, service, lock, publish):
         async with lock:
             require_idle(runs)
             if scope == 'memory':
+                runs.context.clear_memory()
                 from backend.mind.cognition_models import MindCursor
                 with session_scope() as session:
                     ids = list(session.scalars(select(Actor.id).where(Actor.kind == 'agent')))

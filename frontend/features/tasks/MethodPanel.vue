@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { api } from '../../shared/api';
 import MindPanel from '../mind/MindPanel.vue';
+import Icon from '../../shared/Icon.vue';
 const props = defineProps<{ actorId: string; name: string }>();
 const emit = defineEmits<{close: []; inspect: [id: string]}>();
 type Skill = {id:string;name:string;summary:string;enabled:boolean;sourceRunId?:string;validationCount:number;origin:string;lifecycle:string;revision:number;trialFamily?:string;trialError?:string;trialEvidence:{case:number;variant:string;passed:boolean;seconds:number}[];trialSummary?:{candidateRate:number;baselineRate:number;stable:boolean};publicProposalId?:string;trialSpec?:unknown[];secretaryReview?:{approved:boolean;reason:string}};
@@ -57,14 +58,13 @@ onUnmounted(() => { active=false; clearTimeout(timer); window.removeEventListene
 </script>
 <template>
   <div class="drawer-scrim" @click.self="emit('close')">
-    <aside class="work-drawer" role="dialog" aria-label="方法与成长">
-      <header class="drawer-header"><h2>{{ name }} · 方法与成长</h2><button class="text-button" @click="emit('close')">关闭</button></header>
+    <aside class="work-drawer" role="dialog" aria-modal="true" aria-label="方法与成长">
+      <header class="drawer-header"><h2>{{ name }} · 方法与成长</h2><button class="icon-button" aria-label="关闭方法与成长" @click="emit('close')"><Icon name="close" /></button></header>
       <div class="drawer-content">
         <nav class="drawer-tabs"><button :class="{active: tab === 'methods'}" @click="tab = 'methods'">方法与成长</button><button :class="{active: tab === 'mind'}" @click="tab = 'mind'">经历与关系</button></nav>
         <p v-if="error" class="error-message">{{ error }}</p>
         <MindPanel v-if="tab === 'mind'" :actor-id="actorId" />
         <section v-else>
-        <p class="muted">方法影响处理事情的习惯，人物性格影响表达；工具权限单独管理。</p>
         <article v-for="skill in data?.skills || []" :key="skill.id" class="assignment">
           <strong>{{ skill.name }}</strong><small> · {{ lifecycle[skill.lifecycle] || (skill.enabled ? '可选用' : '候选') }} · 版本 {{ skill.revision }}</small>
           <p>{{ skill.summary }}</p>

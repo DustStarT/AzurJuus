@@ -54,6 +54,7 @@ class RunCoordinator:
         from backend.tasks.task_reviews import TaskReviews
         self.reviews = TaskReviews(self)
         self.method_runtime = None
+        self.context = None
 
     def launch(self, run_id):
         try:
@@ -508,16 +509,26 @@ class RunCoordinator:
             bridge_settings['_characterPolicy'] = policy
             bridge = self.bridge_factory(self.store.path.parent / "deepseek-harness" / run_id / phase, bridge_settings, self.endpoint, token, on_event)
             self.bridges[key] = bridge
-            context = self.store.recall(run["prompt"], actor["id"])
+            context = [] if self.context else self.store.recall(run["prompt"], actor["id"])
             if decision:
                 context=[json.dumps({'frame':decision['frame'],'intent':decision['intent'],'stateVersion':decision['stateVersion']},ensure_ascii=False)]
-            elif self.cognition and self.cognition.enabled:
+            elif self.cognition and self.cognition.enabled and not self.context:
                 self.cognition.pump()
                 # The cognitive store owns memory visibility and forgetting.
                 from backend.chat.conversation_scope import asks_about_work
                 context = [self.cognition.context(actor['id'], prompt,
                     peers={run['actorId'], *(a['actorId'] for a in run.get('assignments', []))} if phase != 'planner' else None,
-                    task_run_id=run_id,include_prior_task_history=asks_about_work(run['prompt']))]
+                    task_run_id=run_id,include_prior_task_history=asks_about_work(run['prompt']),
+                    conversation_id=run.get('conversationId', ''))]
+            if self.context:
+                from backend.context.contracts import ContextRequest
+                bundle = self.context.collect(ContextRequest(actor['id'], run.get('conversationId', ''),
+                    'task', run['prompt'], run_id + ':' + phase, run_id,
+                    settings.get('dialoguePreset', 'balanced'), bool(run.get('collaborative'))))
+                context = [json.dumps({'evidence': bundle.experiences + bundle.documents,
+                    'reference': bundle.reference, 'rules': bundle.rules,
+                    'intent': decision['intent'] if decision else None,
+                    'stateVersion': decision['stateVersion'] if decision else None}, ensure_ascii=False)]
             initial_steering = self.store.get(run_id).get("steering", [])
             steering = [s["text"] for s in initial_steering]
             history = [{"role": "user", "content": "角色设定：" + persona + "\n工作规则：" + policy}]
@@ -692,6 +703,49 @@ class RunCoordinator:
                     start = max(0, int(args.get("offset", 0)))
                     end = start + min(100, max(1, int(args.get("limit", 25))))
                     result = {"calls": [{k:c.get(k) for k in ("id", "phase", "name", "status")} for c in records[start:end]], "nextOffset": end if end < len(records) else None}
+            elif name in {'search_context', 'read_context_source'}:
+                from backend.context.contracts import ContextRequest
+                request = ContextRequest(actor_id, run.get('conversationId', ''), mode='task',
+                    query=str(args.get('query') or run['prompt']), source_id=call_id, run_id=run_id,
+                    preset=self.settings_loader().get('dialoguePreset', 'balanced'), public=bool(run.get('collaborative')))
+                if name == 'search_context':
+                    bundle = self.context.collect(request)
+                    result = {'sources': bundle.documents + bundle.experiences, 'reference': bundle.reference,
+                              'traceId': bundle.trace_id}
+                else:
+                    allowed = self.context.visible(request)
+                    source = allowed.get(str(args.get('sourceId', '')))
+                    if not source:
+                        raise PermissionError('来源不存在或不可见。')
+                    offset = max(0, int(args.get('offset', 0)))
+                    end = offset + min(12000, max(1, int(args.get('limit', 4000))))
+                    result = {**source, 'text': source['text'][offset:end],
+                              'nextOffset': end if end < len(source['text']) else None}
+            elif name == 'index_document':
+                if not re.search(r'索引全文|全文索引|全文.{0,10}索引|索引.{0,10}全文|index.{0,30}(?:full|entire)', run['prompt'], re.I):
+                    raise PermissionError('全文索引需要用户明确提出；普通阅读只索引返回片段。')
+                path = str(args.get('path', ''))
+                offset, column, count, checks = 0, 0, 0, []
+                document = Path(path).suffix.lower() in {'.pdf', '.docx', '.xlsx'}
+                while True:
+                    cid = secrets.token_hex(16)
+                    reply = await self.tool(token, {'callId': cid,
+                        'name': 'read_document' if document else 'read_file',
+                        'args': {'path': path, 'offset': offset, 'limit': 10 if document else 200,
+                                 **({} if document else {'column': column})}})
+                    if reply['status'] != 'completed':
+                        raise ValueError('全文索引读取中断，已读片段仍保留。')
+                    checks.append(cid)
+                    count += len(reply['result'].get('items', [])) if document else 1
+                    next_offset, next_column = reply['result'].get('nextOffset'), reply['result'].get('nextColumn', 0)
+                    if next_offset is None:
+                        break
+                    if (next_offset, next_column) <= (offset, column):
+                        raise ValueError('读取游标未前进，已停止全文索引。')
+                    offset, column = next_offset, next_column or 0
+                    await asyncio.sleep(0)
+                result = {'path': path, 'indexedReturnedUnits': count, 'checks': checks,
+                    'scope': '按本次授权逐页读取后索引；不包含其他文件。'}
             else:
                 result = await self.tools.execute(run, name, args, call_id, lambda k, p: self.store.event(run_id, k, {**p, "actorId": actor_id}))
             status = "failed" if isinstance(result, dict) and (result.get("success") is False or result.get("error")) else "completed"
@@ -703,6 +757,13 @@ class RunCoordinator:
                 stored_result = {k:v for k,v in result.items() if k != "image"}
                 stored_result["imageRef"] = call_id
             self.store.put_call(call_id, run_id, name, args, status, stored_result)
+            if self.context and status == 'completed' and name in {'read_file', 'read_document'}:
+                # Successful partial reads survive a later task failure or rendering timeout.
+                try:
+                    self.context.ingest_read(self.store.get(run_id), actor_id, self.store.call(call_id))
+                except Exception as exc:
+                    self.store.event(run_id, 'context.index_deferred', {'callId': call_id,
+                        'errorKind': type(exc).__name__})
             if (status=='completed' and name not in {'delegate','deliver','discuss','execution_history','request_help','replan',*METHOD_ACTIONS}
                     and phase not in {'planner','reviewer','chat'} and not phase.startswith('discussion_')
                     and self.expression and self.expression.enabled):

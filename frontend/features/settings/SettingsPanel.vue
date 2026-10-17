@@ -6,6 +6,8 @@ import Icon from "../../shared/Icon.vue";
 import Avatar from "../../shared/Avatar.vue";
 import TerminalConfiguration from '../characters/TerminalConfiguration.vue';
 import LifeSettings from '../life/LifeSettings.vue';
+import ContextSettings from './ContextSettings.vue';
+import SpeechBubbles from '../chat/SpeechBubbles.vue';
 const props = defineProps<{ workspace: Workspace }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
 const tab = ref("connection"),
@@ -16,6 +18,7 @@ const settings = ref<Settings>({
   ...props.workspace.settings,
   connectedAgentIds: [...props.workspace.settings.connectedAgentIds],
   llmApiKey: "",
+  dialoguePreset: props.workspace.settings.dialoguePreset || 'balanced',
 });
 watch(() => props.workspace.data.agents.map(a=>a.id).join(','), () => {
  settings.value.connectedAgentIds=[...props.workspace.settings.connectedAgentIds];
@@ -23,7 +26,9 @@ watch(() => props.workspace.data.agents.map(a=>a.id).join(','), () => {
  settings.value.maxConnectedAgents=props.workspace.settings.maxConnectedAgents;
 });
 const reduced = ref(localStorage.getItem("azur-reduced-motion") === "true");
+const developerMode = ref(localStorage.getItem("azur-developer-mode") === "true");
 const speechPace = ref(localStorage.getItem('azur-speech-pace') || 'natural');
+const speechPreview = ref(0);
 const userName = ref(props.workspace.data.user.name);
 const userAvatar = ref(props.workspace.data.user.avatarUrl || '');
 const clearing = ref(''), confirmation = ref('');
@@ -100,10 +105,18 @@ const tabs = [
   { id: "world", label: "关系与世界观", icon: "users" },
   { id: "tasks", label: "任务参与", icon: "folder" },
   { id: "life", label: "自主生活", icon: "sparkle" },
+  { id: "context", label: "上下文与检索", icon: "folder" },
   { id: "appearance", label: "外观与动态", icon: "circle" },
   { id: "skills", label: "技能档案", icon: "sparkle" },
   { id: "personal", label: "我的资料与数据", icon: "users" },
 ] as const;
+const advancedTabIds = new Set(['profiles', 'world', 'tasks', 'skills']);
+const visibleTabs = computed(() => developerMode.value ? tabs : tabs.filter(item => !advancedTabIds.has(item.id)));
+watch(developerMode, value => {
+  localStorage.setItem('azur-developer-mode', String(value));
+  window.dispatchEvent(new CustomEvent('azur-developer-mode-changed', { detail: value }));
+  if (!visibleTabs.value.some(item => item.id === tab.value)) tab.value = 'connection';
+});
 async function save() {
   busy.value = true;
   error.value = "";
@@ -171,7 +184,6 @@ async function connectRoster() {
     >
       <header class="drawer-header">
         <div>
-          <span class="eyebrow">PREFERENCES</span>
           <h2>港区设置</h2>
         </div>
         <button
@@ -185,7 +197,7 @@ async function connectRoster() {
       <div class="settings-layout">
         <nav class="settings-nav">
           <button
-            v-for="item in tabs"
+            v-for="item in visibleTabs"
             :key="item.id"
             :class="{ active: tab === item.id }"
             :aria-label="item.label"
@@ -204,6 +216,7 @@ async function connectRoster() {
             <label>更换头像<input type="file" accept="image/png,image/jpeg,image/webp" @change="avatarFile" /></label>
             <button class="text-button" @click="userAvatar = ''">使用文字头像</button>
             <p class="field-hint">图片保存在本地，最大 500KB。点击下方保存设置后生效，新对话会使用你的称呼。</p>
+            <label class="developer-switch"><span><strong>开发者选项</strong><small>显示角色资料、关系和任务的高级编辑入口</small></span><input type="checkbox" v-model="developerMode" /></label>
             <div class="section-divider"></div>
             <h3>记录与记忆</h3>
             <p class="muted">清理前先停止所有任务。以下操作均不会删除工作区内的实际文件。</p>
@@ -224,7 +237,7 @@ async function connectRoster() {
             </template>
           </template>
           <template v-if="tab === 'connection'"
-            ><span class="eyebrow">01 / MODEL</span>
+            >
             <h3>连接你的模型</h3>
             <p class="muted">
               工作在本机完成，模型负责理解、执行与检查。请选择支持工具调用、至少
@@ -270,7 +283,6 @@ async function connectRoster() {
               />启用图片输入与截图定位（deepseek-flash 支持）</label
             >
             <div class="section-divider"></div>
-            <span class="eyebrow">02 / WORKSPACE</span>
             <h3>授权工作区</h3>
             <label
               >任务文件所在目录<input
@@ -283,7 +295,7 @@ async function connectRoster() {
             </template
           >
           <template v-if="tab === 'agents'"
-            ><span class="eyebrow">MEMBERS</span>
+            >
             <h3>在港的伙伴</h3>
             <p class="muted">选择连接的成员，保留她们各自的表达和工作方法。</p>
             <div
@@ -310,7 +322,7 @@ async function connectRoster() {
                 :aria-label="`连接${agent.name}`"
               />
             </div>
-            <details><summary>调整角色名单</summary>
+            <details v-if="developerMode"><summary>调整角色名单</summary>
             <label
               >角色名单<textarea
                 v-model="settings.characterRosterText"
@@ -324,13 +336,18 @@ async function connectRoster() {
               根据名单连接角色
             </button></details></template
           >
-          <TerminalConfiguration v-if="['world','profiles','tasks'].includes(tab)" :key="tab" :section="tab" @changed="emit('saved')" />
-          <LifeSettings v-if="tab === 'life'" />
+          <TerminalConfiguration v-if="developerMode && ['world','profiles','tasks'].includes(tab)" :key="tab" :section="tab" @changed="emit('saved')" />
+          <LifeSettings v-if="tab === 'life'" :developer-mode="developerMode" />
+          <ContextSettings v-if="tab === 'context'" v-model:preset="settings.dialoguePreset" :developer-mode="developerMode" />
           <template v-if="tab === 'appearance'"
-            ><span class="eyebrow">DISPLAY & LIFE</span>
-            <h3>让港区慢下来</h3>
-            <p class="field-hint">聊天背景可在私聊右上角“调整背景”中设置位置与缩放，每个角色单独保存。</p>
-            <label>消息节奏<select v-model="speechPace"><option value="instant">即时</option><option value="natural">自然</option><option value="calm">舒缓</option></select></label>
+            >
+            <h3>界面与消息</h3>
+            <label>消息节奏<select v-model="speechPace" aria-label="消息节奏"><option value="instant">即时</option><option value="natural">自然 · 间隔 2 秒</option><option value="calm">舒缓 · 间隔 3 秒</option></select></label>
+            <button type="button" class="soft-button" @click="speechPreview++">预览气泡效果</button>
+            <div v-if="speechPreview" class="speech-preview">
+              <SpeechBubbles :key="speechPreview" preview :pace="speechPace" conversation-id="settings-preview"
+                text="这是一条气泡示例。&#10;&#10;后面的气泡会依次出现。&#10;&#10;节奏可以按你的习惯调整。" />
+            </div>
             <label
               >窗口尺寸<select v-model="settings.resolutionPreset">
                 <option value="compact">紧凑</option>
@@ -340,11 +357,11 @@ async function connectRoster() {
             ><label class="switch-row"
               ><span
                 ><strong>减少动态效果</strong
-                ><small>减少转场与移动，保留即时反馈</small></span
+                ></span
               ><input type="checkbox" v-model="reduced" /></label
-            ><p class="field-hint">人物活动、主动联系与免打扰在“自主生活”中设置。</p></template>
-          <template v-if="tab === 'skills'"
-            ><span class="eyebrow">SKILL ARCHIVE</span>
+            ></template>
+          <template v-if="developerMode && tab === 'skills'"
+            >
             <h3>技能档案</h3>
             <p class="muted">
               角色已有的方法和经验。工具执行情况以任务记录为准。
@@ -362,9 +379,9 @@ async function connectRoster() {
           >
         </div>
       </div>
-      <footer class="settings-footer">
+      <footer v-if="!['world','profiles','tasks','life'].includes(tab)" class="settings-footer">
         <span class="muted">{{
-          ['world','profiles','tasks','life'].includes(tab) ? '本页修改请使用对应的保存按钮' : saved ? "设置已保存" : "AZURJUUS / LOCAL FIRST"
+          ['world','profiles','tasks','life'].includes(tab) ? '' : saved ? "设置已保存" : ''
         }}</span
         ><button v-if="!['world','profiles','tasks','life'].includes(tab)" class="primary-button" :disabled="busy" @click="save">
           <Icon :name="saved ? 'check' : 'shield'" />{{

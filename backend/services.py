@@ -55,6 +55,7 @@ EXTRA_SETTINGS_KEYS = (
     "mapApiKey",
     "recommendationApiKey",
     "weatherApiKey",
+    "dialoguePreset",
 )
 
 
@@ -224,6 +225,7 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
             "socialIntervalMinutes": workspace.social_interval_minutes,
         }
         settings.update(self._workspace_settings_extras(workspace))
+        settings.setdefault("dialoguePreset", DEFAULT_SETTINGS.get("dialoguePreset", "balanced"))
         for key in EXTRA_SETTINGS_KEYS:
             if key.lower().endswith("apikey") and settings.get(key):
                 settings[key] = reveal(settings[key])
@@ -474,6 +476,28 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
         comments = session.scalars(
             select(SocialComment).where(SocialComment.post_id == post.id).order_by(SocialComment.created_at.asc())
         ).all()
+        visible_comments = [comment for comment in comments if comment.author_id in allowed_ids]
+        serialized_comments = []
+        # Older rows have no reply ID. Recover only an author's explicit opening
+        # address to a single earlier comment; ambiguous names/targets stay flat.
+        import re
+        prior = []
+        for comment in visible_comments:
+            item = self.serialize_comment(comment)
+            if not item['replyToId'] and comment.author_id == post.author_id:
+                targets = []
+                for previous in prior:
+                    if previous.author_id == comment.author_id:
+                        continue
+                    person = session.get(Actor, previous.author_id)
+                    if person and re.match(r'^' + re.escape(person.name) + r'[，,:：、！!\s]', comment.body.strip()):
+                        targets.append(previous)
+                if len(targets) == 1:
+                    item['replyToId'] = targets[0].id
+            if item['replyToId'] not in {p.id for p in prior}:
+                item['replyToId'] = None
+            serialized_comments.append(item)
+            prior.append(comment)
         return {
             "id": post.id,
             "authorId": post.author_id,
@@ -490,7 +514,7 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
             "artPalette": list(post.art_palette or []),
             "mediaUrl": post.media_url,
             "following": post.following,
-            "comments": [self.serialize_comment(comment) for comment in comments if comment.author_id in allowed_ids],
+            "comments": serialized_comments,
         }
 
     def serialize_comment(self, comment: SocialComment) -> dict[str, Any]:
@@ -498,6 +522,7 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
             "id": comment.id,
             "authorId": comment.author_id,
             "body": comment.body,
+            "replyToId": comment.reply_to_id,
             "createdAt": isoformat(comment.created_at),
         }
 
@@ -558,6 +583,10 @@ class AzurJuusService(CharacterService, ChatService, SocialService, TaskService)
             deletion_order = [MindCall, MindControl, LifeRecord, LifeActivity, PersonalGoal, MindDecision, MindProfile,
                 SocialShareConsent, SocialReaction, SocialPublication, SocialDeferredReply,
                 SocialAction, SocialTopic, *deletion_order]
+            from backend.context.models import (ContextSource, ContextGrant, ContextJob, ContextTombstone,
+                ContextReference, ContextTrace, ContextSetting)
+            deletion_order = [ContextTrace, ContextReference, ContextGrant, ContextJob, ContextTombstone,
+                ContextSource, ContextSetting, *deletion_order]
 
             for model in deletion_order:
                 session.execute(delete(model))

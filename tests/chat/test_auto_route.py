@@ -54,6 +54,7 @@ def test_auto_chat_task_and_retry_use_one_decision(world, monkeypatch, tmp_path)
     assert client.post('/api/messages/send', json={**greeting, 'content':'另一条消息'}).status_code == 409
     with session_scope() as session:
         assert session.get(Message, first.json()['runId']+'-user').metadata_json['routeKind'] == 'chat'
+        assert session.get(Message, first.json()['runId']+'-user').metadata_json['requestId'] == greeting['requestId']
 
     authorize_workspace(client, tmp_path)
     task = client.post('/api/messages/send', json={'conversationId':cid,
@@ -228,7 +229,7 @@ def test_selected_book_evidence_reaches_expression_without_bleeding_into_smallta
 
     monkeypatch.setattr(coordinator.expression, 'generate', generate)
     followup, _ = coordinator.store.create({'actorId':ids[0], 'actors':[actor],
-        'mode':'chat', 'collaborative':False, 'conversationId':'port-hub',
+        'mode':'chat', 'collaborative':False, 'conversationId':'dm-'+ids[0],
         'prompt':'你觉得这本书怎么样？', 'history':[], 'workspace':'',
         'taskEvidenceHint':True}, uuid4().hex)
     assert asyncio.run(coordinator.expression.speak(followup, actor, 'chat', followup['prompt'])) == sourced_answer
@@ -296,7 +297,12 @@ def test_completed_read_api_followup_in_same_and_other_channel(world, monkeypatc
         run = coordinator.store.get(followup.json()['runId'])
         assert run['mode'] == 'chat' and run['taskEvidenceHint']
         assert followup.json()['route']['kind'] == 'followup'
-        assert resolve_task_reference(coordinator.store, ids[0], run['prompt'], run['history'])['runId'] == task_id
+        evidence = resolve_task_reference(coordinator.store, ids[0], run['prompt'], run['history'],
+            conversation_id=cid, public=cid=='port-hub')
+        if cid == 'port-hub':
+            assert evidence is None  # Asking in a group is not permission to share private reading.
+        else:
+            assert evidence['runId'] == task_id
     assert resolve_task_reference(coordinator.store, ids[1], '你觉得这本书写得怎么样？') is None
     fresh_request=client.post('/api/messages/send', json={'conversationId':'dm-'+ids[0],
         'content':'请重新读取这本书并概括', 'requestId':uuid4().hex})
