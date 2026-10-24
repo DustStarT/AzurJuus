@@ -298,7 +298,8 @@ def test_group_contact_belongs_only_to_speaker(mind,monkeypatch):
     assert captured[0]['audience']['kind']=='group'
     assert {p['id'] for p in captured[0]['audience']['peers']}==set(ids[1:3])
     assert 'decisionPurpose' not in captured[0]
-    assert '等待用户' in captured[0]['intent']
+    assert '等待用户' in captured[0]['scene']
+    assert captured[0]['intent']['targetId']==cid
     own=client.get(f'/api/actors/{ids[0]}/life').json()['events']
     assert len(own)==1 and own[0]['kind']=='contact' and own[0]['actorId']==ids[0]
     assert own[0]['participants']==[ids[0]]
@@ -621,6 +622,7 @@ def test_background_model_wait_is_preempted(mind):
 
 def test_habit_requires_independent_events_and_sessions(mind):
     r,c,_,ids,_=mind
+    asyncio.run(r.compile_profile(ids[0]))
     observe(c,ids[0],'检查附件',peers=[ids[1]],conversationId='one')
     eid=c.cognition.experiences(ids[0])[0]['id']
     async def generate(*_):return {'beliefs':[{'text':'总先检查附件','kind':'habit','sourceIds':[eid]}]}
@@ -633,6 +635,7 @@ def test_habit_requires_independent_events_and_sessions(mind):
 
 def test_three_independent_events_enable_habit(mind):
     r,c,_,ids,_=mind
+    asyncio.run(r.compile_profile(ids[0]))
     for n in range(3):observe(c,ids[0],'检查附件'+str(n),conversationId='session-'+str(n%2))
     sources=[e['id'] for e in c.cognition.experiences(ids[0])]
     async def generate(*_):return {'beliefs':[{'text':'检查附件','kind':'habit','sourceIds':sources,'confidence':.6}]}
@@ -643,6 +646,7 @@ def test_three_independent_events_enable_habit(mind):
 
 def test_stale_reflection_is_not_applied(mind):
     r,c,_,ids,_=mind
+    asyncio.run(r.compile_profile(ids[0]))
     observe(c,ids[0],'检查附件')
     eid=c.cognition.experiences(ids[0])[0]['id']
     async def generate(*_):
@@ -655,6 +659,7 @@ def test_stale_reflection_is_not_applied(mind):
 
 def test_commitment_is_a_quote_not_invented_completion(mind):
     r,c,_,ids,_=mind
+    asyncio.run(r.compile_profile(ids[0]))
     observe(c,ids[0],'我会在提交前提醒检查附件。')
     eid=c.cognition.experiences(ids[0])[0]['id']
     async def generate(*_):return {'beliefs':[],'commitments':[
@@ -671,6 +676,7 @@ def test_commitment_is_a_quote_not_invented_completion(mind):
 def test_profile_change_invalidates_inflight_reflection(mind):
     from backend.mind.mind_models import MindProfile
     r,c,_,ids,_=mind
+    asyncio.run(r.compile_profile(ids[0]))
     observe(c,ids[0],'阅读时先看目录')
     eid=c.cognition.experiences(ids[0])[0]['id']
     async def generate(*_):
@@ -759,6 +765,9 @@ def test_task_intent_reaches_harness_without_authority_expansion(mind):
     assert '当前人物已选择的工作意图' in captured['settings']['_characterPolicy']
     identity=json.loads(captured['settings']['_characterIdentity'])
     assert identity['personality']==r.profile(ids[0])['interpretation']
+    from backend.characters.terminal_characters import background
+    assert identity['background']==background(ids[0])[0]
+    assert '当前人物身份贯穿理解、选择、记忆和发言' in captured['settings']['_characterPolicy']
     assert 'machine-clock' in captured['settings']['_characterPolicy']
     assert set(captured['settings']['_allowedActions'])=={'list_dir','deliver'}
     assert any('stateVersion' in m['content'] for m in captured['history'])

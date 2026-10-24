@@ -241,8 +241,11 @@ class ExpressionService:
                             source, run['id'], preset,
                             bool(phase.startswith('discussion_') or audience and audience.get('kind') in {'team', 'group_chat'})),
                             history=run.get('history', []), persona={'background': persona})
-                        run = {**run, 'history': context_bundle.history}
-                        history_limit = len(context_bundle.history) or 1
+                        # Retrieval supplements a conversation; it must not replace
+                        # the live dialogue with keyword-ranked history.  Character
+                        # continuity depends on recent turns whose wording may not
+                        # overlap the current utterance.
+                        history_limit = chat_history_limit if phase == 'chat' else 12
                     from backend.chat.conversation_scope import asks_about_work
                     from backend.chat.task_reference import resolve_task_reference, DEICTIC
                     related_work=((context_bundle.reference if context_bundle and not (context_bundle.reference or {}).get('unresolved') else None)
@@ -281,12 +284,12 @@ class ExpressionService:
                             task_run_id=run['id'] if phase!='chat' else '',
                             include_task_memory=phase!='chat' or ('outcomes' if work_followup else False),
                             related_run_id=related_work.get('runId','') if related_work and not related_work.get('ambiguous') else '',
-                            public=bool(phase.startswith('discussion_') or audience and audience.get('kind') in {'team','group_chat'}))
+                            public=bool(phase.startswith('discussion_') or audience and audience.get('kind') in {'team','group_chat'}),
+                            context_bundle=context_bundle)
                         # Provenance belongs to the host record. Supplying multiple opaque
                         # IDs here competes with the single speech envelope sourceId.
-                        # Keep diagnostic appraisals and tradeoffs out of speech
-                        # generation. The selected action and checked fact bundle
-                        # are enough to render a character-consistent answer.
+                        # Pass the actor's shareable reply direction, while
+                        # keeping diagnostic appraisals and tradeoffs private.
                         from backend.characters.dialogue_persona import public_dialogue_intent
                         mind=json.dumps({'intent':public_dialogue_intent(decision['intent'])},ensure_ascii=False)
                         profile=runtime.profile(actor['id'])
@@ -311,7 +314,7 @@ class ExpressionService:
                         '通常一条气泡，保留角色关注点和语气，简单确认可以更短。')
                     policy += f'合计上限{max_chars}字。'
                     policy += ('segments 必须为1至12个非空字符串。' if detailed else 'segments 必须为1至3个非空字符串，普通短回复默认只用一个。')
-                    policy += '认知意图中的 action 和 targetId 只用于选择回应方向；其余内部决策细节、目标更新和评估只留在系统内部，不要说成台词。问候优先自然回应，不自动汇报日程、总结或追问任务。'
+                    policy += '认知意图中的 action 和 targetId 决定行动，reply 保留本人愿意表达的关注点、态度与语气；结合眼前话语自然说出来，不念字段。内部决策细节、目标更新和评估留在系统内部。问候优先自然回应，不自动汇报日程、总结或追问任务。'
                     if phase == 'chat' and preset == 'compact':
                         policy += '当前采用节省 token 的表达：保留角色关注点和语气，只说当前最有用的一两句，省略重复背景、客套铺垫和已知结论。'
                     from backend.chat.sticker_catalog import expression_catalog
@@ -331,7 +334,7 @@ class ExpressionService:
                     if audience and audience.get('kind') == 'peer':
                         policy += '这是同伴间正在进行的聊天，不是给指挥官的工作汇报。直接接对方刚说的具体一点；能短答就短答，通常15至80字。不复述总目标、完整方案、分工或验收标准。不必先赞同再补充再总结，不要求每次称呼。保留分歧和具体建议，不能为了简短省掉决定所需的条件。通过关注点和语气体现性格，不靠口癖、反复道歉或打比方。'
                     elif audience and audience.get('kind') == 'group_chat':
-                        policy += '这是有多位成员的远程群聊，成员名单只表示有阅读频道的资格，不证明此刻在线或在同一个地方。只扮演当前角色，不代替别人回答。看清历史中的发言者，接续具体话题，不重复问候或总结，不假定他人的经历是自己的。通常一句短答。'
+                        policy += '这是有多位成员的远程群聊，成员名单只表示有阅读频道的资格，不证明此刻在线或在同一个地方。以当前角色的身份回复，不代替别人回答。看清历史中的发言者，接续具体话题，不重复问候或总结，不假定他人的经历是自己的。通常一句短答。'
                     elif audience and audience.get('kind') == 'team':
                         policy += '这是包括用户和同伴的协作群。承接刚发生的具体讨论，按问题复杂度保留必要答案，不作秘书致辞或审计报告。不挨个汇报每人的步骤，不虚构表扬或争执，不要求大家再次确认已经核验的事实。只有来源有待用户决定事项时才询问。技术证据在工作记录中；必要的结果、问题和交付物名称仍需说清。'
                     if phase=='chat':
@@ -417,11 +420,19 @@ class ExpressionService:
                         data['contextTraceId'] = context_bundle.trace_id
                         data['cognitionTraceId'] = decision.get('contextTraceId') if decision else None
                         data['contextSourceIds'] = context_bundle.allowed_sources
+                    # Daily role-play may use numbers and filenames from the
+                    # character's own setting. Provenance checks belong to task
+                    # answers and explicit work follow-ups, not greetings or
+                    # ordinary in-character conversation.
+                    validation_facts = facts
+                    if phase == 'chat' and not work_followup:
+                        validation_facts = {'character': persona,
+                            'background': lore(intent, actor.get('sourceCharacter') or actor['name'])}
                     def checked(value):
                         prepared=value
                         try:
                             prepared=prepare_expression(value,source,detailed)
-                            return validate(prepared,source,detailed,facts,max_chars=max_chars)
+                            return validate(prepared,source,detailed,validation_facts,max_chars=max_chars)
                         except ValueError as exc:
                             parts=prepared.get('segments') if isinstance(prepared,dict) else None
                             self.c.store.event(run['id'],'expression.validation_failed',{

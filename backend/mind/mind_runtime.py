@@ -15,6 +15,7 @@ from backend.models import Actor
 from backend.mind.cognition_models import Experience, MindState, MindOutbox
 from backend.mind.mind_models import MindProfile, MindDecision, PersonalGoal, MindControl, MindCall, LifeActivity
 from backend.mind.mind_contracts import MindFrame, DecisionIntent, StateDelta, ProfileInterpretation, LifeSettings
+from backend.mind.character_policy import POLICY_VERSION, character_instruction
 
 
 def key(*parts):
@@ -174,6 +175,18 @@ class MindRuntime:
                 '群聊仅在回答未决问题、有新增事实或不同观点时发言；改写附和选择沉默。')
         if kind=='decide' and payload.get('mode')=='social':
             instruction+='\n群聊参与判断优先于表达：只有尚未回答的问题、具体的新信息、真实的不同意见或新的相关问题才值得接话。最近几句已经表示赞同、总结、待命或等别人说话时，选择 wait/end；改写别人说过的话、再感谢一次、再邀请大家发言不算新内容。不要为了轮流说话而选择 speak。用户只是群成员之一；最近发言者是同伴时，优先回应其具体观点或自己的相关目标，不把同伴对话转成等待用户回来、回复或批准。'
+        if kind in {'profile','understand','decide','reflect','compact','express','moments_post','moments_comment'}:
+            instruction = character_instruction(kind) + '\n' + instruction
+        if kind in {'express','moments_post','moments_comment'}:
+            from backend.characters.terminal_characters import TERMINAL
+            from backend.characters.personality import expression_rules
+            instruction = TERMINAL + expression_rules() + instruction
+        # Callers with a complete message stack already bind their own persona.
+        # Lightweight life and moments calls also need a named identity and the
+        # actual background, not only an abstract compiled list of values.
+        if messages is None and kind in {'express','moments_post','moments_comment'}:
+            from backend.characters.terminal_characters import background as actor_background
+            instruction += '\n当前人物：' + actor_background(actor_id)[0]
         if schema:
             instruction += '\n只返回符合此 JSON schema 的对象：'+json.dumps(schema.model_json_schema(),ensure_ascii=False)
         messages = messages or [{'role':'system','content':instruction},
@@ -246,7 +259,7 @@ class MindRuntime:
                         'text':imported_background(item['text'],item['name'])},ensure_ascii=False)
             for i,item in enumerate((actor.extra_json or {}).get('originalMindNotes',[])):
                 sources['background:'+str(i)] = item.get('text','')
-            digest = key(json.dumps(sources,sort_keys=True,ensure_ascii=False))
+            digest = key(POLICY_VERSION, json.dumps(sources,sort_keys=True,ensure_ascii=False))
             row = s.get(MindProfile,actor_id)
             if row is None:
                 if s.bind.dialect.name=='sqlite':
@@ -331,7 +344,7 @@ class MindRuntime:
         return not self.background_blocked() and state['callsLastHour']<state['settings']['hourlyCalls']
 
     def snapshot(self, actor_id, prompt, source, conversation_id='', public=False, task_run_id='', include_task_memory=True,
-                 related_run_id='', mode='context'):
+                 related_run_id='', mode='context', context_bundle=None, include_derived=True):
         self.mind.pump()
         profile=self.profile(actor_id)
         state=self.mind.inspect(actor_id)
@@ -350,8 +363,7 @@ class MindRuntime:
         category_limit={'compact':3,'balanced':5,'rich':6}[preset] if dialogue else 5
         terms=relevance_terms(query) if dialogue else set(re.findall(r'[\u4e00-\u9fff]|\w+',prompt.lower()))
         grouped={k:[] for k in ('episodic','semantic','procedural','prospective','working')}
-        context_bundle = None
-        if getattr(self.c, 'context', None):
+        if context_bundle is None and getattr(self.c, 'context', None):
             from backend.context.contracts import ContextRequest
             context_bundle = self.c.context.collect(ContextRequest(actor_id, conversation_id, mode,
                 query, source, task_run_id, preset, public,
@@ -378,10 +390,6 @@ class MindRuntime:
                     r['kind'] not in {'speech','request','outcome'}]
         elif public:
             rows=[r for r in rows if r['data'].get('shareable')]
-        if context_bundle:
-            visible = self.c.context.visible(context_bundle.request)
-            visible_exp = {v['grant'].get('experienceId') for v in visible.values()}
-            rows = [r for r in rows if r['id'] in visible_exp]
         if task_run_id:
             # A new task does not inherit earlier requests or result reports.
             # Explicit follow-ups may cite prior verified outcomes.
@@ -420,18 +428,26 @@ class MindRuntime:
             sum(t in r['text'].lower() for t in terms)+int(any(t in r['text'] and t in goal_text for t in terms)),
             r['data'].get('importance',0),r['at']),reverse=True)
         allowed={source,*profile['sources']}
+        retrieved_ids=set()
         if context_bundle:
-            for e in context_bundle.documents + context_bundle.experiences:
+            # Documents/Wiki are factual evidence for expression, not personality
+            # memories. Keep retrieved experiences in cognition and retain the
+            # normal recently relevant rows below as an affective/relationship
+            # fallback when retrieval has no matching hit.
+            for e in context_bundle.experiences:
                 category = 'working' if e.get('kind') == 'request' else 'episodic'
-                grouped[category].append({'id': e.get('experienceId') or e['sourceId'], 'text': e['text'],
+                experience_id=e.get('experienceId') or e['sourceId']
+                if experience_id in retrieved_ids:
+                    continue
+                retrieved_ids.add(experience_id)
+                grouped[category].append({'id': experience_id, 'text': e['text'],
                     'sourceKind': e.get('provenance'), 'speakerId': e.get('speakerId'),
                     'ownSpeech': e.get('ownSpeech'), 'source': e})
             allowed.update(context_bundle.allowed_sources)
-            # The bundle already ranked and deduplicated these records.
-            rows = []
         for r in rows[:memory_row_limit]:
             category='working' if r['kind']=='request' else 'episodic'
             if len(grouped[category])>=category_limit:continue
+            if r['id'] in retrieved_ids:continue
             grouped[category].append({'id':r['id'],'text':r['text'][:500],
                 'correction':r['data'].get('userCorrection'),'sourceKind':r['data'].get('sourceKind',r['kind']),
                 'speakerId':r['data'].get('speakerId'),
@@ -443,7 +459,9 @@ class MindRuntime:
                 row=s.get(Experience,eid)
                 if not row:continue
                 for belief in row.data.get('derived',[]):
-                    if belief.get('valid',True) and (belief['kind']!='habit' or belief.get('stable')) and set(belief['sourceIds']+belief.get('counterSourceIds',[]))<=allowed:
+                    if (include_derived and belief.get('policyVersion')==POLICY_VERSION
+                            and belief.get('valid',True) and (belief['kind']!='habit' or belief.get('stable'))
+                            and set(belief['sourceIds']+belief.get('counterSourceIds',[]))<=allowed):
                         category='procedural' if belief['kind']=='method' else 'semantic'
                         if len(grouped[category])<4:grouped[category].append(belief)
         grouped['prospective']=[v for v in state['data'].get('commitments',[]) if v.get('sourceId') in allowed][-4:]
@@ -485,19 +503,22 @@ class MindRuntime:
             'contextTraceId': context_bundle.trace_id if context_bundle else ''}
 
     async def think(self, actor_id, source, prompt, *, mode='chat', conversation_id='', public=False,
-                    background=False, actions=None, task_run_id='', include_task_memory=None,related_run_id=''):
+                    background=False, actions=None, task_run_id='', include_task_memory=None,related_run_id='',
+                    context_bundle=None):
         for attempt in range(3):
             try:
                 return await self._think_once(actor_id,source,prompt,mode=mode,conversation_id=conversation_id,
                     public=public,background=background,actions=actions,task_run_id=task_run_id,
-                    include_task_memory=include_task_memory,related_run_id=related_run_id)
+                    include_task_memory=include_task_memory,related_run_id=related_run_id,
+                    context_bundle=context_bundle)
             except MindInterrupted as exc:
                 # A newly projected observation invalidates the snapshot. Re-read
                 # facts and decide again; never publish an old decision as current.
                 if background or attempt==2 or '人物已收到新事件' not in str(exc):raise
 
     async def _think_once(self, actor_id, source, prompt, *, mode='chat', conversation_id='', public=False,
-                    background=False, actions=None, task_run_id='', include_task_memory=None,related_run_id=''):
+                    background=False, actions=None, task_run_id='', include_task_memory=None,related_run_id='',
+                    context_bundle=None):
         if not self.active(actor_id):return None
         queued=time.monotonic()
         async with self.locks[actor_id]:
@@ -508,7 +529,7 @@ class MindRuntime:
             snap=self.snapshot(actor_id,prompt,source,conversation_id,public,
                 task_run_id=task_run_id or (source.split(':',1)[0] if mode=='task' else ''),
                 include_task_memory=include_task_memory if include_task_memory is not None else mode not in {'chat','social'},
-                related_run_id=related_run_id,mode=mode)
+                related_run_id=related_run_id,mode=mode,context_bundle=context_bundle)
             with session_scope() as s:
                 previous=s.get(MindDecision,did)
                 if (previous and previous.status=='committed' and previous.data.get('profileVersion')==snap['profileVersion']
@@ -688,13 +709,16 @@ class MindRuntime:
             rows=s.scalars(select(Experience).join(MindState,MindState.actor_id==Experience.actor_id).join(Actor,Actor.id==Experience.actor_id)
                 .where(Experience.forgotten.is_(False),MindState.enabled.is_(True),Actor.is_active.is_(True))
                 .order_by(Experience.at.desc()).limit(100)).all()
-            candidate=next((r for r in rows if r.data.get('mindReflection') not in {'done','historical'}),None)
+            candidate=next((r for r in rows if r.data.get('mindReflection')!='historical' and
+                (r.data.get('mindReflection')!='done' or r.data.get('mindReflectionVersion')!=POLICY_VERSION)),None)
             if not candidate:return
             aid,eid=candidate.actor_id,candidate.id
         if not self.active(aid):return
         async with self.locks[aid]:
             revision=self.revision
-            snap=self.snapshot(aid,candidate.text,eid)
+            await self.compile_profile(aid,True,revision)
+            # Learn afresh from observations, never from earlier model summaries.
+            snap=self.snapshot(aid,candidate.text,eid,include_derived=False)
             delta=await self.call(aid,'reflect',snap,StateDelta,True,revision)
             with session_scope() as s:
                 s.execute(update(MindControl).where(MindControl.id=='life').values(id='life'))
@@ -715,8 +739,14 @@ class MindRuntime:
                     sessions={e.run_id or e.data.get('activityId') or e.data.get('conversationId') for e in support}-{None,''}
                     stable=belief.kind!='habit' or len({e.data.get('eventId',e.id) for e in support})>=3 and len(sessions)>=2
                     derived.append({**belief.model_dump(),'confidence':belief.confidence/(1+len(belief.counterSourceIds)),
-                        'stable':stable,'valid':True,'version':state.version,'origin':'interpretation'})
-                row.data={**row.data,'derived':derived,'mindReflection':'done'}
+                        'stable':stable,'valid':True,'version':state.version,'origin':'interpretation',
+                        'policyVersion':POLICY_VERSION})
+                previous=row.data.get('derived',[])
+                history=row.data.get('derivedHistory',[])
+                if previous:
+                    history=[*history,{'beliefs':previous,'at':time.time()}][-3:]
+                row.data={**row.data,'derived':derived,'derivedHistory':history,'mindReflection':'done',
+                    'mindReflectionVersion':POLICY_VERSION}
                 commitments=list(state.data.get('commitments',[]))
                 for promise in delta.commitments:
                     evidence=s.get(Experience,promise.sourceId)

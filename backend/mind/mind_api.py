@@ -78,10 +78,12 @@ def install_mind_api(app, runtime):
 
     @app.get('/api/actors/{actor_id}/beliefs')
     def beliefs(actor_id:str):
+        from backend.mind.character_policy import POLICY_VERSION
         from backend.database import session_scope
         from backend.mind.cognition_models import Experience
         from sqlalchemy import select
         with session_scope() as s:
             invoke(runtime.mind.state,s,actor_id)
             rows=s.scalars(select(Experience).where(Experience.actor_id==actor_id,Experience.forgotten.is_(False)))
-            return {'beliefs':[b for row in rows for b in row.data.get('derived',[]) if b.get('valid',True)]}
+            return {'beliefs':[b for row in rows for b in row.data.get('derived',[])
+                if b.get('valid',True) and b.get('policyVersion')==POLICY_VERSION]}

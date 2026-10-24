@@ -472,6 +472,7 @@ class ContextService:
         mandatory = estimate(request.query) + estimate(bundle.persona) + estimate(bundle.rules)
         used = mandatory
         omitted, seen, selected = [], set(), []
+        source_counts = {}
         uncertain = []
         # Current message and exact evidence are mandatory and may exceed the soft target.
         for hit in hits:
@@ -487,6 +488,14 @@ class ContextService:
                 continue
             if identity in seen:
                 continue
+            # A conversational prompt benefits from one representative fragment
+            # per source.  Multiple adjacent Wiki chunks are factual redundancy
+            # here and can drown out the character's own voice. Pinned sources
+            # (explicit document follow-ups) retain their full evidence.
+            conversational = request.mode in {'chat', 'social', 'moments', 'life-share'}
+            if conversational and hit['source'] not in pinned and source_counts.get(hit['source'], 0) >= 1:
+                omitted.append({'sourceId': hit['source'], 'reason': 'duplicate_source'})
+                continue
             fragment = {'sourceId': source['sourceId'], 'version': source['version'], 'kind': source['kind'],
                 'title': source['title'], 'text': hit['text'], 'at': source['at'], **source['data'],
                 'ownRead': bool(source['grant'].get('reader')), 'span': [hit['start'], hit['stop']],
@@ -500,6 +509,7 @@ class ContextService:
             seen.add(identity)
             if result_run:
                 seen.add('result:' + result_run)
+            source_counts[hit['source']] = source_counts.get(hit['source'], 0) + 1
             used += cost
             selected.append(fragment)
         # Merge overlapping spans without duplicating their contents.
@@ -560,7 +570,12 @@ class ContextService:
         # to expand the soft target. Keep the immediate handoff and open requests.
         protected = {v.get('id') for v in bundle.open_questions}
         optional = []
+        conversational = bundle.request.mode in {'chat', 'social', 'moments', 'life-share'}
         for i, item in enumerate(bundle.history[:-2]):
+            if conversational:
+                # The caller already applies the dialogue session boundary and
+                # preset history limit. Do not keyword-prune those turns again.
+                continue
             if item.get('id') and item.get('id') in protected:
                 continue
             text = str(item.get('content') or item.get('text') or '')

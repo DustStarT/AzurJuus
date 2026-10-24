@@ -346,9 +346,9 @@ class LifeRuntime:
         intent=(('这是和频道同伴的自主群聊；用户只是可读成员，本轮没有向你提问。'
             '围绕自己的近况或想法与同伴交流，不请示、催促或等待用户回复。') if kind=='group' else
             '这是给用户的私聊；有相关内容才分享自己的近况，或简短关心对方，不催促回复。')
-        from backend.characters.dialogue_persona import personality_for_dialogue
+        from backend.characters.dialogue_persona import personality_for_dialogue, public_dialogue_intent
         value=await self.r.call(actor_id,'express',{'profile':personality_for_dialogue(profile['interpretation']),
-            'intent':intent,'audience':audience,
+            'intent':public_dialogue_intent(decision['intent']),'scene':intent,'audience':audience,
             'facts':events,'sourceId':source},background=True,revision=revision)
         segments=validate(value,source)
         if kind=='group':
@@ -465,7 +465,7 @@ class LifeRuntime:
                         complete=activity['onlineSeconds']>=activity['durationSeconds'] and (activity['kind']!='invite' or len(dialogue)>=2)
                         actions=['wait','pause','end']+(['finish'] if complete else [])
                         if activity['kind']=='invite' and len(dialogue)<6:actions.append('speak')
-                    prompt='决定如何处理当前模拟活动：'+json.dumps(activity,ensure_ascii=False)
+                    prompt='看看自己接下来想怎样安排这件事：'+json.dumps(activity,ensure_ascii=False)
                 else:
                     actions=['read','practice','rest','reflect','invite','stroll','meal','hobby','wait']
                     with session_scope() as s:
@@ -475,7 +475,7 @@ class LifeRuntime:
                             if not (room.extra_json or {}).get('archived')]
                     rooms=[room for room in rooms if self.can_contact(aid,room['kind'])]
                     if rooms:actions.append('contact')
-                    prompt='根据自己的兴趣和目标选择下一项轻量生活活动。可以等待；没有合适目标时可提出一个有背景依据的长期目标。邀请只使用人物编号，主动联系 targetId 使用频道编号。模拟活动不授予现实能力。\n'+json.dumps({'directory':directory,'channels':rooms},ensure_ascii=False)
+                    prompt='此刻想做点什么，或只是歇一会儿？从自己的兴趣、习惯和眼前的人与事出发；没有打算可以等待，不必为了安排活动提出目标。邀请只使用人物编号，主动联系 targetId 使用频道编号。生活记录不能代替工具执行结果。\n'+json.dumps({'directory':directory,'channels':rooms},ensure_ascii=False)
                 # Keep unexecuted plans across quota failures and restarts. Re-evaluate
                 # against current state, never backfill events from the missed interval.
                 with session_scope() as s:

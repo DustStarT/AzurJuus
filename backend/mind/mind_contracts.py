@@ -43,6 +43,13 @@ class GoalUpdate(Record):
     evidenceIds: list[str] = Field(min_length=1, max_length=12)
 
 
+class ReplyDirection(Record):
+    """Only what the actor is willing to express in the current audience."""
+    focus: str = Field(default='', max_length=180)
+    stance: str = Field(default='', max_length=180)
+    tone: str = Field(default='', max_length=100)
+
+
 class DecisionIntent(Record):
     action: Literal['speak','publish','wait','end','execute','read','practice','rest','reflect','invite','stroll','meal','hobby','create_group','accept','decline','continue','finish','pause','contact']
     purpose: str = Field(min_length=1, max_length=400)
@@ -52,6 +59,7 @@ class DecisionIntent(Record):
     goalId: str = Field(default='', max_length=80)
     adjustWhen: str = Field(default='', max_length=400)
     sourceIds: list[str] = Field(default_factory=list, max_length=12)
+    reply: ReplyDirection = Field(default_factory=ReplyDirection)
     goal: GoalProposal | None = None
     goalUpdate: GoalUpdate | None = None
 
@@ -67,6 +75,7 @@ class CompactIntent(Record):
     action: str = Field(max_length=30)
     purpose: str = Field(min_length=1, max_length=300)
     sourceIds: list[str] = Field(default_factory=list, max_length=8)
+    reply: ReplyDirection = Field(default_factory=ReplyDirection)
 
 
 class CompactThought(Record):
@@ -101,6 +110,8 @@ class ProfileInterpretation(Record):
     values: list[str] = Field(default_factory=list, max_length=6)
     tendencies: list[str] = Field(default_factory=list, max_length=6)
     selfImage: str = Field(default='', max_length=600)
+    speechStyle: list[str] = Field(default_factory=list, max_length=5)
+    emotionalHabits: list[str] = Field(default_factory=list, max_length=4)
     interests: list[str] = Field(default_factory=list, max_length=6)
     sensitiveSituations: list[str] = Field(default_factory=list, max_length=6)
     methods: list[str] = Field(default_factory=list, max_length=6)

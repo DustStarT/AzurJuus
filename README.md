@@ -136,6 +136,8 @@ azurjuus/
 
 角色素材的字段和导入方式见 resources/characters/README.md。
 
+人物从设定、理解与行动选择到表达、反思和长期记忆的完整流程，以及旧数据的兼容策略，见 [人物心智与表达连续性](CHARACTER_MIND.md)。
+
 ## 验证
 
 在项目目录执行：

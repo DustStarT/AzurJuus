@@ -12,7 +12,7 @@ const beliefs = ref<{text:string;kind:string;stable?:boolean;confidence:number;s
 const error = ref(''), cursor = ref<number|null>(null), busy = ref(false), editing = ref(false);
 const draft = ref({id:'',title:'',motivation:'',nextStep:'',status:'active',reason:''});
 const labels:Record<string,string> = {active:'进行中',invited:'等待同伴决定',suspended:'暂停',paused:'暂停',completed:'已完成',abandoned:'已放弃',cancelled:'已结束',declined:'未接受'};
-const fields = [{key:'values',label:'核心价值'},{key:'tendencies',label:'行为倾向'},{key:'selfImage',label:'自我认识'},{key:'interests',label:'兴趣'},{key:'sensitiveSituations',label:'敏感情境'},{key:'methods',label:'方法偏好'},{key:'exceptions',label:'例外'},{key:'uncertainty',label:'不确定性'}];
+const fields = [{key:'values',label:'核心价值'},{key:'tendencies',label:'行为倾向'},{key:'selfImage',label:'自我认识'},{key:'speechStyle',label:'说话习惯'},{key:'emotionalHabits',label:'情绪与相处习惯'},{key:'interests',label:'兴趣'},{key:'sensitiveSituations',label:'敏感情境'},{key:'attentionPriorities',label:'首先在意什么'},{key:'ambiguityStyle',label:'面对不确定时'},{key:'valueTradeoffs',label:'在意的取舍'},{key:'methods',label:'方法偏好'},{key:'methodFallbacks',label:'受阻后的选择'},{key:'exceptions',label:'例外'},{key:'uncertainty',label:'不确定性'}];
 const interpretation = ref<Record<string,string>>({});
 let generation=0,active=true;
 const traces=ref<{id:string;status:string;stateVersion?:number;waitSeconds?:number;intent?:{purpose:string;method:string};frame?:{interpretation:string};sourceIds?:string[]}[]>([]);
@@ -38,7 +38,7 @@ async function saveGoal() {
 async function saveProfile(reset=false) {
   busy.value=true; error.value='';
   try {
-    await api(`/api/actors/${props.actorId}/mind-profile`,{interpretation:reset ? null : Object.fromEntries(fields.map(f=>[f.key,['selfImage','uncertainty'].includes(f.key) ? interpretation.value[f.key] || '' : (interpretation.value[f.key] || '').split('\n').map(t=>t.trim()).filter(Boolean)]))});
+    await api(`/api/actors/${props.actorId}/mind-profile`,{interpretation:reset ? null : Object.fromEntries(fields.map(f=>[f.key,['selfImage','uncertainty','ambiguityStyle'].includes(f.key) ? interpretation.value[f.key] || '' : (interpretation.value[f.key] || '').split('\n').map(t=>t.trim()).filter(Boolean)]))});
     editing.value=false; await load();
   } catch(e) { error.value=(e as Error).message; } finally { busy.value=false; }
 }
